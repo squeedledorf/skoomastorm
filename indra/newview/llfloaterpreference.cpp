@@ -485,6 +485,7 @@ LLFloaterPreference::LLFloaterPreference(const LLSD& key)
     // </FS:Ansariel>
     mCommitCallbackRegistrar.add("Pref.BrowseSplashImage",          boost::bind(&LLFloaterPreference::onClickBrowseSplashImage, this));
     mCommitCallbackRegistrar.add("Pref.BrowseLoginLogo",            boost::bind(&LLFloaterPreference::onClickBrowseLoginLogo, this));
+    mCommitCallbackRegistrar.add("Pref.HitMarkerSettings",          boost::bind(&LLFloaterPreference::onClickHitMarkerSettings, this));
     mCommitCallbackRegistrar.add("Pref.SetCache",               boost::bind(&LLFloaterPreference::onClickSetCache, this));
     mCommitCallbackRegistrar.add("Pref.ResetCache",             boost::bind(&LLFloaterPreference::onClickResetCache, this));
 //  mCommitCallbackRegistrar.add("Pref.ClickSkin",              boost::bind(&LLFloaterPreference::onClickSkin, this,_1, _2));
@@ -1731,6 +1732,12 @@ void LLFloaterPreference::onClickBrowseSplashImage()
             }
         },
         LLFilePicker::FFLOAD_IMAGE, false);
+}
+
+// Hitmarker options floater
+void LLFloaterPreference::onClickHitMarkerSettings()
+{
+    LLFloaterReg::showInstance("fs_hit_marker");
 }
 
 // Login bar logo: pick a local replacement image

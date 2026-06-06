@@ -886,6 +886,12 @@ static void handleLoginSplashChanged(const LLSD& newvalue)
     FSPanelLogin::loadLoginPage();
 }
 
+// Hitmarker: bridge combat hits listener follows the enable setting
+static void handleHitMarkerEnabledChanged(const LLSD& newvalue)
+{
+    FSLSLBridge::instance().viewerToLSL(newvalue.asBoolean() ? "CombatHitsListen|1" : "CombatHitsListen|0");
+}
+
 // <FS:PP> External integrations (OC, LM etc.) for Bridge
 static void handleExternalIntegrationsOptionChanged()
 {
@@ -1530,6 +1536,7 @@ void settings_setup_listeners()
     setting_setup_signal_listener(gSavedPerAccountSettings, "UseLSLFlightAssist", handleFlightAssistOptionChanged);
     setting_setup_signal_listener(gSavedPerAccountSettings, "UseMoveLock", handleMovelockOptionChanged);
     setting_setup_signal_listener(gSavedSettings, "FSKillFeedEnabled", handleKillFeedEnabledChanged);
+    setting_setup_signal_listener(gSavedSettings, "FSHitMarkerEnabled", handleHitMarkerEnabledChanged);
     setting_setup_signal_listener(gSavedSettings, "FSLocalLoginSplash", handleLoginSplashChanged);
     setting_setup_signal_listener(gSavedSettings, "FSLocalLoginSplashImage", handleLoginSplashChanged);
     setting_setup_signal_listener(gSavedSettings, "FSShowLoginLogo", handleLoginSplashChanged);

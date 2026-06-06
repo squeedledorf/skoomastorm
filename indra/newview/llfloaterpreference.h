@@ -254,6 +254,8 @@ public:
     void onClickBrowseSplashImage();
     // Login bar logo replacement picker
     void onClickBrowseLoginLogo();
+    // Hitmarker options floater
+    void onClickHitMarkerSettings();
 
     // <FS:Ansariel> Improved graphics preferences
     void updateSliderText(LLSliderCtrl* ctrl, LLTextBox* text_box);
