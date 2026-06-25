@@ -60,6 +60,8 @@
 #include "llemote.h"
 #include "llfloatertools.h"
 #include "llheadrotmotion.h"
+#include "bdmlaimmotion.h"
+#include "llhudeffectcombataim.h"
 #include "llhudeffecttrail.h"
 #include "llhudmanager.h"
 #include "llhudnametag.h"
@@ -171,6 +173,7 @@ const LLUUID ANIM_AGENT_EYE = LLUUID("5c780ea8-1cd1-c463-a128-48c023f6fbea");  /
 const LLUUID ANIM_AGENT_FLY_ADJUST = LLUUID("db95561f-f1b0-9f9a-7224-b12f71af126e");  //"fly_adjust"
 const LLUUID ANIM_AGENT_HAND_MOTION = LLUUID("ce986325-0ba7-6e6e-cc24-b17c4b795578");  //"hand_motion"
 const LLUUID ANIM_AGENT_HEAD_ROT = LLUUID("e6e8d1dd-e643-fff7-b238-c6b4b056a68d");  //"head_rot"
+const LLUUID ANIM_BD_ML_AIM_MOTION = LLUUID("bd32048e-efa7-b57b-ac42-943678b40b08"); //"ml_aim"
 const LLUUID ANIM_AGENT_PELVIS_FIX = LLUUID("0c5dd2a2-514d-8893-d44d-05beffad208b");  //"pelvis_fix"
 const LLUUID ANIM_AGENT_TARGET = LLUUID("0e4896cb-fba4-926c-f355-8720189d5b55");  //"target"
 const LLUUID ANIM_AGENT_WALK_ADJUST = LLUUID("829bc85b-02fc-ec41-be2e-74cc6dd7215d");  //"walk_adjust"
@@ -1288,6 +1291,7 @@ void LLVOAvatar::initClass()
     gAnimLibrary.animStateSetString(ANIM_AGENT_FLY_ADJUST,"fly_adjust");
     gAnimLibrary.animStateSetString(ANIM_AGENT_HAND_MOTION,"hand_motion");
     gAnimLibrary.animStateSetString(ANIM_AGENT_HEAD_ROT,"head_rot");
+    gAnimLibrary.animStateSetString(ANIM_BD_ML_AIM_MOTION,"ml_aim");
     gAnimLibrary.animStateSetString(ANIM_AGENT_PELVIS_FIX,"pelvis_fix");
     gAnimLibrary.animStateSetString(ANIM_AGENT_TARGET,"target");
     gAnimLibrary.animStateSetString(ANIM_AGENT_WALK_ADJUST,"walk_adjust");
@@ -1402,6 +1406,7 @@ void LLVOAvatar::initInstance()
         registerMotion( ANIM_AGENT_FLY_ADJUST,              LLFlyAdjustMotion::create );
         registerMotion( ANIM_AGENT_HAND_MOTION,             LLHandMotion::create );
         registerMotion( ANIM_AGENT_HEAD_ROT,                LLHeadRotMotion::create );
+        registerMotion( ANIM_BD_ML_AIM_MOTION,             BDMLAimMotion::create );
         registerMotion( ANIM_AGENT_PELVIS_FIX,              LLPelvisFixMotion::create );
         registerMotion( ANIM_AGENT_SIT_FEMALE,              LLKeyframeMotion::create );
         registerMotion( ANIM_AGENT_TARGET,                  LLTargetingMotion::create );
@@ -5476,8 +5481,20 @@ void LLVOAvatar::updateOrientation(LLAgent& agent, F32 speed, F32 delta_time)
                     velDir *= -1.0f;
                 }
             }
-            LLVector3 fwdDir = lerp(primDir, velDir, clamp_rescale(speed, 0.5f, 2.0f, 0.0f, 1.0f));
-            if (isSelf() && gAgentCamera.cameraMouselook())
+            LLVector3 fwdDir;
+            // SkoomaStorm combat aim: BDMLAimMotion is active for the local avatar while aiming AND
+            // for remote avatars driven by the aim side-channel. fwdDir is what the lower body (root)
+            // wants to face; the native speed blend leans it from the aim/body facing (primDir) when
+            // standing toward the movement direction (velDir) once moving. That gives exactly the two
+            // behaviours wanted: while MOVING the legs follow locomotion (strafe / reverse-walk read)
+            // while the torso and head keep aiming on top via BDMLAimMotion + head-rot; while STANDING
+            // the legs hold toward the aim and the pelvis-threshold cone below lets the torso/head turn
+            // with the camera until the hold limit, then the legs turn (locomotion turn animation).
+            bool combat_aiming = isMotionActive(ANIM_BD_ML_AIM_MOTION);
+            fwdDir = lerp(primDir, velDir, clamp_rescale(speed, 0.5f, 2.0f, 0.0f, 1.0f));
+            // The mouselook reflect below keeps the body from facing away from the camera; while combat
+            // aiming we deliberately skip it so the legs can face the movement direction (reverse-walk).
+            if (!combat_aiming && isSelf() && gAgentCamera.cameraMouselook())
             {
                 // make sure fwdDir stays in same general direction as primdir
                 if (gAgent.getFlying())
@@ -5514,11 +5531,25 @@ void LLVOAvatar::updateOrientation(LLAgent& agent, F32 speed, F32 delta_time)
             static LLCachedControl<F32> s_pelvis_rot_threshold_slow(gSavedSettings, "AvatarRotateThresholdSlow", 60.0);
             static LLCachedControl<F32> s_pelvis_rot_threshold_fast(gSavedSettings, "AvatarRotateThresholdFast", 2.0);
 
-            F32 pelvis_rot_threshold = clamp_rescale(speed, 0.1f, 1.0f, s_pelvis_rot_threshold_slow, s_pelvis_rot_threshold_fast);
-
-            if (self_in_mouselook)
+            F32 pelvis_rot_threshold;
+            if (combat_aiming)
             {
-                pelvis_rot_threshold *= MOUSELOOK_PELVIS_FOLLOW_FACTOR;
+                // Standing combat aim: hold the legs planted while the torso and head follow the
+                // camera, up to this limit (degrees), then turn the legs (playing the locomotion turn
+                // animation). Use the full cone as the slow-speed threshold and do NOT apply the
+                // mouselook follow factor, so the legs hold instead of chasing the camera. As speed
+                // rises the threshold still tightens toward the fast value so moving legs conform to
+                // the movement direction. Tunable: SSCombatAimLegMaxDeviation.
+                static LLCachedControl<F32> s_combat_leg_hold(gSavedSettings, "SSCombatAimLegMaxDeviation", 60.f);
+                pelvis_rot_threshold = clamp_rescale(speed, 0.1f, 1.0f, (F32)s_combat_leg_hold, s_pelvis_rot_threshold_fast);
+            }
+            else
+            {
+                pelvis_rot_threshold = clamp_rescale(speed, 0.1f, 1.0f, s_pelvis_rot_threshold_slow, s_pelvis_rot_threshold_fast);
+                if (self_in_mouselook)
+                {
+                    pelvis_rot_threshold *= MOUSELOOK_PELVIS_FOLLOW_FACTOR;
+                }
             }
             pelvis_rot_threshold *= DEG_TO_RAD;
 
@@ -5950,6 +5981,60 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     //-------------------------------------------------------------------------
     // store data relevant to motions
     mSpeed = speed;
+
+    // SkoomaStorm body-aim: pose the chest/head toward the aim direction whenever combat-aiming,
+    // decoupled from mouselook (works in OTS/ADS/mouselook). For the local avatar we drive the pose
+    // directly AND broadcast the aim to other SkoomaStorm viewers via the combat-aim side-channel
+    // (LLHUDEffectCombatAim); the real lookat is suppressed during combat so no crosshair leaks.
+    if (isSelf())
+    {
+        static LLCachedControl<bool> combat_body_aim(gSavedSettings, "SSCombatBodyAim", true);
+        // cameraMouselook() is true in mouselook, OTS, and all ADS states.
+        const bool aiming = combat_body_aim
+            && ( gAgentCamera.cameraOTS()
+              || gAgentCamera.cameraMouselook() );
+
+        if (aiming)
+        {
+            // Feed the live camera aim every frame so the chest/head track it (the lookat system
+            // otherwise freezes/removes "LookAtPoint"). Static persists until updateMotions() reads it.
+            LLVector3 aim_dir = LLViewerCamera::getInstance()->getAtAxis();
+            if (aim_dir.normVec() > 0.001f)
+            {
+                static LLVector3 sAimPoint;
+                sAimPoint = aim_dir * 3.f;
+                setAnimationData("LookAtPoint", &sAimPoint);
+
+                if (!isMotionActive(ANIM_BD_ML_AIM_MOTION))
+                {
+                    startMotion(ANIM_BD_ML_AIM_MOTION);
+                }
+
+                // Broadcast to other SkoomaStorm viewers (custom effect type; stock viewers
+                // ignore it). setAim() throttles its own sim send.
+                if (mCombatAim.isNull() || mCombatAim->isDead())
+                {
+                    mCombatAim = (LLHUDEffectCombatAim*)LLHUDManager::getInstance()->createViewerEffect(LLHUDObject::LL_HUD_EFFECT_COMBAT_AIM, true);
+                }
+                if (mCombatAim.notNull())
+                {
+                    mCombatAim->setAim(this, sAimPoint);
+                }
+            }
+        }
+        else
+        {
+            if (isMotionActive(ANIM_BD_ML_AIM_MOTION))
+            {
+                stopMotion(ANIM_BD_ML_AIM_MOTION);
+            }
+            if (mCombatAim.notNull())
+            {
+                mCombatAim->markDead();
+                mCombatAim = NULL;
+            }
+        }
+    }
 
     // update animations
     if (!visible && !isSelf()) // NOTE: never do a "hidden update" for self avatar as it interrupts controller processing

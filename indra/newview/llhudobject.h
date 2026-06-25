@@ -102,7 +102,8 @@ public:
         LL_HUD_EFFECT_VOICE_VISUALIZER, // Ventrella
         LL_HUD_NAME_TAG,
         LL_HUD_EFFECT_BLOB,
-        LL_HUD_EFFECT_RESET_SKELETON
+        LL_HUD_EFFECT_RESET_SKELETON,
+        LL_HUD_EFFECT_COMBAT_AIM         // SkoomaStorm: aim side-channel (custom type; stock viewers ignore it)
     };
 protected:
     static void sortObjects();

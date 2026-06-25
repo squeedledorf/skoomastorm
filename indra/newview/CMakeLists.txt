@@ -482,6 +482,7 @@ set(viewer_SOURCE_FILES
     llhttpretrypolicy.cpp
     llhudeffect.cpp
     llhudeffectbeam.cpp
+    llhudeffectcombataim.cpp
     llhudeffectlookat.cpp
     llhudeffectpointat.cpp
     llhudeffecttrail.cpp
@@ -675,6 +676,7 @@ set(viewer_SOURCE_FILES
     llpbrterrainfeatures.cpp
     llpersistentnotificationstorage.cpp
     llphysicsmotion.cpp
+    bdmlaimmotion.cpp
     llphysicsshapebuilderutil.cpp
     llpipelinelistener.cpp
     llplacesinventorybridge.cpp
@@ -1357,6 +1359,7 @@ set(viewer_HEADER_FILES
     llhttpretrypolicy.h
     llhudeffect.h
     llhudeffectbeam.h
+    llhudeffectcombataim.h
     llhudeffectlookat.h
     llhudeffectpointat.h
     llhudeffecttrail.h
@@ -1535,6 +1538,7 @@ set(viewer_HEADER_FILES
     llpbrterrainfeatures.h
     llpersistentnotificationstorage.h
     llphysicsmotion.h
+    bdmlaimmotion.h
     llphysicsshapebuilderutil.h
     llpipelinelistener.h
     llplacesinventorybridge.h

@@ -67,11 +67,13 @@ extern const LLUUID ANIM_AGENT_HEAD_ROT;
 extern const LLUUID ANIM_AGENT_PELVIS_FIX;
 extern const LLUUID ANIM_AGENT_TARGET;
 extern const LLUUID ANIM_AGENT_WALK_ADJUST;
+extern const LLUUID ANIM_BD_ML_AIM_MOTION; // SkoomaStorm body-aim (viewer-local procedural motion)
 
 class LLViewerWearable;
 class LLVoiceVisualizer;
 class LLHUDNameTag;
 class LLHUDEffectSpiral;
+class LLHUDEffectCombatAim;
 class LLTexGlobalColor;
 
 struct LLAppearanceMessageContents;
@@ -1247,6 +1249,9 @@ public:
     // user speaks, it puts a voice symbol over the avatar's head) and gesticulations
     LLPointer<LLVoiceVisualizer>  mVoiceVisualizer;
     int                 mCurrentGesticulationLevel;
+
+    // SkoomaStorm: outgoing combat-aim side-channel effect (self avatar only)
+    LLPointer<LLHUDEffectCombatAim>  mCombatAim;
 
     //--------------------------------------------------------------------
     // Step sound

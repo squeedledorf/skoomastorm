@@ -37,6 +37,7 @@
 #include "llhudeffectlookat.h"
 #include "llhudeffectpointat.h"
 #include "llhudeffectresetskeleton.h"
+#include "llhudeffectcombataim.h"
 #include "llhudnametag.h"
 #include "llvoicevisualizer.h"
 
@@ -266,6 +267,9 @@ LLHUDEffect *LLHUDObject::addHUDEffect(const U8 type)
         break;
     case LL_HUD_EFFECT_RESET_SKELETON:
         hud_objectp = new LLHUDEffectResetSkeleton(type);
+        break;
+    case LL_HUD_EFFECT_COMBAT_AIM:
+        hud_objectp = new LLHUDEffectCombatAim(type);
         break;
     default:
         LL_WARNS() << "Unknown type of hud effect:" << (U32) type << LL_ENDL;

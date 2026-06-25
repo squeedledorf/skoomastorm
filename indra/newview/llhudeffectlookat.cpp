@@ -301,6 +301,16 @@ void LLHUDEffectLookAt::packData(LLMessageSystem *mesgsys)
     }
 
     bool is_self = source_avatar && source_avatar->isSelf();
+    // SkoomaStorm: during combat aim, suppress the real lookat entirely (no crosshair on any
+    // viewer). The aim is delivered to other SkoomaStorm viewers via the combat-aim side-channel
+    // (LLHUDEffectCombatAim), which drives their copy of this avatar's head + chest pose.
+    static LLCachedControl<bool> combat_body_aim(gSavedSettings, "SSCombatBodyAim", true);
+    if (is_self && combat_body_aim
+        && (gAgentCamera.cameraOTS() || gAgentCamera.cameraMouselook()))
+    {
+        markDead();
+        return;
+    }
     static LLCachedControl<bool> is_private(gSavedSettings, "PrivateLookAtTarget", false);
     static LLCachedControl<bool> isLocalPrivate(gSavedSettings, "PrivateLocalLookAtTarget", false);
     if (!is_self) //AW: TODO: find out why this happens at all and fix there
