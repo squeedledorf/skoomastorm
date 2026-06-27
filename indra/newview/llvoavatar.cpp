@@ -62,6 +62,7 @@
 #include "llheadrotmotion.h"
 #include "bdmlaimmotion.h"
 #include "llhudeffectcombataim.h"
+#include "aimdiag.h" // SkoomaStorm temporary combat-aim diagnostics
 #include "llhudeffecttrail.h"
 #include "llhudmanager.h"
 #include "llhudnametag.h"
@@ -174,6 +175,10 @@ const LLUUID ANIM_AGENT_FLY_ADJUST = LLUUID("db95561f-f1b0-9f9a-7224-b12f71af126
 const LLUUID ANIM_AGENT_HAND_MOTION = LLUUID("ce986325-0ba7-6e6e-cc24-b17c4b795578");  //"hand_motion"
 const LLUUID ANIM_AGENT_HEAD_ROT = LLUUID("e6e8d1dd-e643-fff7-b238-c6b4b056a68d");  //"head_rot"
 const LLUUID ANIM_BD_ML_AIM_MOTION = LLUUID("bd32048e-efa7-b57b-ac42-943678b40b08"); //"ml_aim"
+
+// SkoomaStorm temporary combat-aim diagnostics sink (see aimdiag.h). Remove before ship.
+AimDiagFrame gAimDiag = {};
+const void* gAimDiagSelf = nullptr;
 const LLUUID ANIM_AGENT_PELVIS_FIX = LLUUID("0c5dd2a2-514d-8893-d44d-05beffad208b");  //"pelvis_fix"
 const LLUUID ANIM_AGENT_TARGET = LLUUID("0e4896cb-fba4-926c-f355-8720189d5b55");  //"target"
 const LLUUID ANIM_AGENT_WALK_ADJUST = LLUUID("829bc85b-02fc-ec41-be2e-74cc6dd7215d");  //"walk_adjust"
@@ -5491,30 +5496,92 @@ void LLVOAvatar::updateOrientation(LLAgent& agent, F32 speed, F32 delta_time)
             // the legs hold toward the aim and the pelvis-threshold cone below lets the torso/head turn
             // with the camera until the hold limit, then the legs turn (locomotion turn animation).
             bool combat_aiming = isMotionActive(ANIM_BD_ML_AIM_MOTION);
-            fwdDir = lerp(primDir, velDir, clamp_rescale(speed, 0.5f, 2.0f, 0.0f, 1.0f));
-            // The mouselook reflect below keeps the body from facing away from the camera; while combat
-            // aiming we deliberately skip it so the legs can face the movement direction (reverse-walk).
-            if (!combat_aiming && isSelf() && gAgentCamera.cameraMouselook())
+            static LLCachedControl<bool> s_lock_facing(gSavedSettings, "SSCombatAimLockFacing", true);
+            if (combat_aiming && s_lock_facing)
             {
-                // make sure fwdDir stays in same general direction as primdir
-                if (gAgent.getFlying())
+                // Keep facing the aim (primDir) instead of spinning to face the travel direction, but
+                // let the legs LEAN a little toward the strafe so movement reads. Flip the move
+                // direction when traveling backward so we keep facing the aim AND the lean inverts
+                // (back-strafe leans opposite the forward-strafe) while the native backward locomotion
+                // plays. The lean is clamped to SSCombatAimStrafeLean degrees so it is a lean, not a
+                // turn; the pelvis cone below still handles camera sweeps. Lock toggled by
+                // SSCombatAimLockFacing.
+                // Decompose the velocity into forward/back and lateral (strafe) components relative
+                // to the aim. The lean magnitude tracks the lateral component (so a pure sideways
+                // A/D strafe gets a full lean), and the SIGN is inverted only when moving backward.
+                // The backward decision is a hysteresis latch (enter at vf<-0.3, leave at vf>0.3) so
+                // a pure sideways strafe -- which sits right at the perpendicular boundary -- holds a
+                // stable lean instead of flipping sign frame-to-frame (that flip was the jitter).
+                // A positive rotation about up turns LEFT, so a right strafe (vl>0) needs a negative
+                // angle to lean right -- hence the leading minus.
+                fwdDir = primDir; // base: face the aim. The lean below only rotates this when active;
+                                  // without this fwdDir stays (0,0,0) and the legs freeze when not strafing.
+                F32 target_lean = 0.f;
+                if (speed > 0.5f)
                 {
-                    fwdDir = LLViewerCamera::getInstance()->getAtAxis();
+                    LLVector3 rightDir = primDir % upDir;
+                    rightDir.normalize();
+                    F32 vf = velDir * primDir;   // forward (+) / backward (-)
+                    F32 vl = velDir * rightDir;  // strafe right (+) / left (-)
+                    if (vf < -0.3f)      mCombatLeanBackward = true;
+                    else if (vf > 0.3f)  mCombatLeanBackward = false;
+                    F32 dir = mCombatLeanBackward ? -1.f : 1.f;
+                    static LLCachedControl<F32> s_strafe_lean(gSavedSettings, "SSCombatAimStrafeLean", 85.f);
+                    target_lean = -(F32)s_strafe_lean * DEG_TO_RAD * vl * dir;
                 }
-                else
+                // Ease the lean over time so reversing or swapping strafe direction glides instead of
+                // snapping (the dominant source of the jerk). Tunable via SSCombatAimLeanSmoothHalfLife.
+                static LLCachedControl<F32> s_lean_hl(gSavedSettings, "SSCombatAimLeanSmoothHalfLife", 0.025f);
+                F32 lean_interp = LLSmoothInterpolation::getInterpolant(llmax(0.001f, (F32)s_lean_hl));
+                mCombatLeanRad = lerp(mCombatLeanRad, target_lean, lean_interp);
+                if (fabsf(mCombatLeanRad) > 0.0005f)
                 {
-                    LLVector3 at_axis = LLViewerCamera::getInstance()->getAtAxis();
-                    LLVector3 up_vector = gAgent.getReferenceUpVector();
-                    at_axis -= up_vector * (at_axis * up_vector);
-                    at_axis.normalize();
-
-                    F32 dot = fwdDir * at_axis;
-                    if (dot < 0.f)
+                    LLQuaternion lean_q(mCombatLeanRad, upDir);
+                    fwdDir = primDir * lean_q;
+                    fwdDir.normalize();
+                }
+            }
+            else
+            {
+                fwdDir = lerp(primDir, velDir, clamp_rescale(speed, 0.5f, 2.0f, 0.0f, 1.0f));
+                // The mouselook reflect keeps the body from facing away from the camera; while combat
+                // aiming we skip it so the legs can face the movement direction (reverse-walk).
+                if (!combat_aiming && isSelf() && gAgentCamera.cameraMouselook())
+                {
+                    // make sure fwdDir stays in same general direction as primdir
+                    if (gAgent.getFlying())
                     {
-                        fwdDir -= 2.f * at_axis * dot;
-                        fwdDir.normalize();
+                        fwdDir = LLViewerCamera::getInstance()->getAtAxis();
+                    }
+                    else
+                    {
+                        LLVector3 at_axis = LLViewerCamera::getInstance()->getAtAxis();
+                        LLVector3 up_vector = gAgent.getReferenceUpVector();
+                        at_axis -= up_vector * (at_axis * up_vector);
+                        at_axis.normalize();
+
+                        F32 dot = fwdDir * at_axis;
+                        if (dot < 0.f)
+                        {
+                            fwdDir -= 2.f * at_axis * dot;
+                            fwdDir.normalize();
+                        }
                     }
                 }
+            }
+
+            // SkoomaStorm diag: capture pre-correction facing (self only). See aimdiag.h.
+            if (isSelf())
+            {
+                gAimDiagSelf = (const void*)this;
+                mCombatTurnDir = 0; // set to +/-1 below if the legs are turning this frame
+                gAimDiag.chest_valid = false; // set true by BDMLAimMotion::onUpdate when it runs this frame
+                gAimDiag.combat_aiming = combat_aiming;
+                gAimDiag.speed = speed;
+                gAimDiag.primdir_yaw = atan2f(primDir.mV[1], primDir.mV[0]) * RAD_TO_DEG;
+                gAimDiag.veldir_yaw  = atan2f(velDir.mV[1], velDir.mV[0]) * RAD_TO_DEG;
+                gAimDiag.fwd_pre_yaw = atan2f(fwdDir.mV[1], fwdDir.mV[0]) * RAD_TO_DEG;
+                gAimDiag.turn_flag = 0;
             }
 
             LLQuaternion root_rotation = mRoot->getWorldMatrix().quaternion();
@@ -5540,8 +5607,21 @@ void LLVOAvatar::updateOrientation(LLAgent& agent, F32 speed, F32 delta_time)
                 // mouselook follow factor, so the legs hold instead of chasing the camera. As speed
                 // rises the threshold still tightens toward the fast value so moving legs conform to
                 // the movement direction. Tunable: SSCombatAimLegMaxDeviation.
-                static LLCachedControl<F32> s_combat_leg_hold(gSavedSettings, "SSCombatAimLegMaxDeviation", 60.f);
-                pelvis_rot_threshold = clamp_rescale(speed, 0.1f, 1.0f, (F32)s_combat_leg_hold, s_pelvis_rot_threshold_fast);
+                static LLCachedControl<F32> s_combat_leg_hold(gSavedSettings, "SSCombatAimLegMaxDeviation", 85.f);
+                // Raise the speed floor from 0.1 to 0.5 so residual standing-velocity jitter cannot
+                // shrink the standing leg hold (which would fire the leg turn early). Above 0.5 m/s
+                // the cone still tightens toward the fast value so moving legs conform to motion.
+                pelvis_rot_threshold = clamp_rescale(speed, 0.5f, 1.0f, (F32)s_combat_leg_hold, s_pelvis_rot_threshold_fast);
+                if (isSelf() && speed >= 0.5f)
+                {
+                    // Violent camera sweep WHILE MOVING: shrink the whole hold cone (trigger + hold +
+                    // release all scale with it) so the legs turn and FOLLOW the aim instead of sitting
+                    // pinned just under the hold limit and only catching up once you stop. Only while
+                    // moving -- when standing this must stay the full cone so the turn-in-place settle
+                    // hysteresis (which lives just under the cone) is not crushed below the settle angle.
+                    F32 cam_ang = LLViewerCamera::getInstance()->getAverageAngularSpeed();
+                    pelvis_rot_threshold *= clamp_rescale(cam_ang, 1.0f, 4.0f, 1.0f, 0.25f);
+                }
             }
             else
             {
@@ -5554,6 +5634,7 @@ void LLVOAvatar::updateOrientation(LLAgent& agent, F32 speed, F32 delta_time)
             pelvis_rot_threshold *= DEG_TO_RAD;
 
             F32 angle = angle_between( pelvisDir, fwdDir );
+            F32 corr_mag_dbg = 0.f; // SkoomaStorm diag
 
             // The avatar's root is allowed to have a yaw that deviates widely
             // from the forward direction, but if roll or pitch are off even
@@ -5561,14 +5642,22 @@ void LLVOAvatar::updateOrientation(LLAgent& agent, F32 speed, F32 delta_time)
             if(root_roll < 1.f * DEG_TO_RAD
                && root_pitch < 5.f * DEG_TO_RAD)
             {
-                // smaller correction vector means pelvis follows prim direction more closely
-                if (!mTurning && angle > pelvis_rot_threshold*0.75f)
+                // smaller correction vector means pelvis follows prim direction more closely.
+                // SkoomaStorm combat aim: the legs must hold until the aim reaches the FULL leg cone
+                // (head + chest take everything below it), so enter mTurning at 1.0x instead of the
+                // stock 0.75x. Non-combat locomotion turning keeps the stock 0.75x trigger verbatim.
+                F32 turn_enter = combat_aiming ? pelvis_rot_threshold : pelvis_rot_threshold*0.75f;
+                if (!mTurning && angle > turn_enter)
                 {
                     mTurning = true;
                 }
 
-                // use tighter threshold when turning
-                if (mTurning)
+                // use tighter threshold when turning.
+                // SkoomaStorm combat aim: skip the 0.4x collapse + FPS tighten. That collapse is what
+                // yanked the root inward (~45 -> ~24 deg) the instant the legs began to turn, which
+                // re-zeroed the root-relative chest twist and read as the torso "snapping back". On
+                // the combat path the root instead eases in over the top band of the cone (below).
+                if (mTurning && !combat_aiming)
                 {
                     pelvis_rot_threshold *= 0.4f;
                     // account for fps, assume that above value is for ~60fps
@@ -5582,18 +5671,82 @@ void LLVOAvatar::updateOrientation(LLAgent& agent, F32 speed, F32 delta_time)
                     }
                 }
 
-                // am I done turning?
-                if (angle < pelvis_rot_threshold)
+                // am I done turning? Combat aim commits to a decisive turn-in-place: once it starts it
+                // sweeps the legs all the way to the aim (down to a small settle angle) instead of
+                // releasing at 0.85x and leaving the legs in tiny catch-up snaps. That gives ONE smooth
+                // turn the turn-in-place animation can ride, with a wide hysteresis (enter at the cone,
+                // exit at the settle angle) so it does not chatter. Tunable: SSCombatAimTurnSettle.
+                // The decisive turn-in-place (full hold, then sweep toward the aim) applies ONLY when
+                // STANDING. While MOVING, the legs must keep tracking fwdDir (the strafe lean /
+                // movement direction) within the cone -- that is the running movement feel, and the
+                // full-hold below would otherwise freeze it.
+                bool combat_inplace = combat_aiming && speed < 0.5f;
+                // The legs sweep toward the aim and the correction asymptotes to the settle angle, so
+                // settle must sit a safe margin BELOW the cone (or the turn band closes / never
+                // releases -> the legs stick mid-turn). Clamp it to [4 deg, cone - 8 deg].
+                static LLCachedControl<F32> s_turn_settle(gSavedSettings, "SSCombatAimTurnSettle", 8.f);
+                F32 settle_rad = llclamp((F32)s_turn_settle * DEG_TO_RAD, 4.f * DEG_TO_RAD, pelvis_rot_threshold - 8.f * DEG_TO_RAD);
+
+                F32 turn_exit;
+                // Release a small margin ABOVE the settle asymptote: the sweep only approaches settle,
+                // so exiting exactly AT settle would never fire and mTurning would stick on forever.
+                if (combat_inplace)     turn_exit = settle_rad + 2.f * DEG_TO_RAD;
+                else if (combat_aiming) turn_exit = pelvis_rot_threshold*0.85f;  // moving: original release band
+                else                    turn_exit = pelvis_rot_threshold;
+                if (angle < turn_exit)
                 {
                     mTurning = false;
                 }
 
-                LLVector3 correction_vector = (pelvisDir - fwdDir) * clamp_rescale(angle, pelvis_rot_threshold*0.75f, pelvis_rot_threshold, 1.0f, 0.0f);
+                // Correction holds the legs planted until the turn triggers, then (while turning) eases
+                // from no-hold at the cone down to full-hold at the settle angle, so the legs sweep
+                // smoothly to the aim and decelerate as they arrive. Non-combat keeps the stock band.
+                F32 correction_factor;
+                if (combat_inplace)
+                {
+                    // standing turn-in-place: hold fully until the turn triggers, then sweep to the aim
+                    correction_factor = mTurning ? clamp_rescale(angle, settle_rad, pelvis_rot_threshold, 1.0f, 0.0f) : 1.0f;
+                }
+                else if (combat_aiming)
+                {
+                    // MOVING while aiming: legs track fwdDir (strafe lean / movement) within the cone
+                    correction_factor = clamp_rescale(angle, pelvis_rot_threshold*0.85f, pelvis_rot_threshold, 1.0f, 0.0f);
+                }
+                else
+                {
+                    correction_factor = clamp_rescale(angle, pelvis_rot_threshold*0.75f, pelvis_rot_threshold, 1.0f, 0.0f);
+                }
+                LLVector3 correction_vector = (pelvisDir - fwdDir) * correction_factor;
+                corr_mag_dbg = correction_vector.magVec();
                 fwdDir += correction_vector;
             }
             else
             {
                 mTurning = false;
+            }
+
+            // SkoomaStorm diag: capture post-correction root/cone state (self only).
+            if (isSelf())
+            {
+                gAimDiag.turning = mTurning;
+                gAimDiag.orient_angle_deg = angle * RAD_TO_DEG;
+                gAimDiag.pelvis_threshold_deg = pelvis_rot_threshold * RAD_TO_DEG;
+                gAimDiag.pelvis_yaw = atan2f(pelvisDir.mV[1], pelvisDir.mV[0]) * RAD_TO_DEG;
+                gAimDiag.fwd_post_yaw = atan2f(fwdDir.mV[1], fwdDir.mV[0]) * RAD_TO_DEG;
+                gAimDiag.correction_mag = corr_mag_dbg;
+            }
+
+            // SkoomaStorm: guard against a degenerate forward direction. Looking straight up/down in
+            // combat aim collapses primDir (the horizontal projection of a near-vertical aim) to ~0,
+            // and a zero fwdDir below yields a NaN/degenerate body rotation that corrupts mRoot and
+            // freezes the legs for the rest of the session. Hold the current facing instead.
+            if (fwdDir.magVecSquared() < 0.001f)
+            {
+                fwdDir = pelvisDir;
+                if (fwdDir.magVecSquared() < 0.001f)
+                {
+                    fwdDir.setVec(1.f, 0.f, 0.f);
+                }
             }
 
             // Now compute the full world space rotation for the whole body (wQv)
@@ -5607,10 +5760,12 @@ void LLVOAvatar::updateOrientation(LLAgent& agent, F32 speed, F32 delta_time)
                 if ((fwdDir % pelvisDir) * upDir > 0.f)
                 {
                     gAgent.setControlFlags(AGENT_CONTROL_TURN_RIGHT);
+                    if (isSelf()) { gAimDiag.turn_flag = 1; mCombatTurnDir = 1; }
                 }
                 else
                 {
                     gAgent.setControlFlags(AGENT_CONTROL_TURN_LEFT);
+                    if (isSelf()) { gAimDiag.turn_flag = -1; mCombatTurnDir = -1; }
                 }
             }
 
@@ -6005,6 +6160,13 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
                 sAimPoint = aim_dir * 3.f;
                 setAnimationData("LookAtPoint", &sAimPoint);
 
+                // SkoomaStorm: publish the max angle the head may lead the chest, so LLHeadRotMotion
+                // keeps the head stuck with the torso instead of riding the body when the legs lag.
+                static LLCachedControl<F32> s_head_torso_max(gSavedSettings, "SSCombatAimHeadTorsoMax", 35.f);
+                static F32 sHeadLeadRad;
+                sHeadLeadRad = (F32)s_head_torso_max * DEG_TO_RAD;
+                setAnimationData("CombatHeadLeadMaxRad", &sHeadLeadRad);
+
                 if (!isMotionActive(ANIM_BD_ML_AIM_MOTION))
                 {
                     startMotion(ANIM_BD_ML_AIM_MOTION);
@@ -6024,6 +6186,8 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
         }
         else
         {
+            // Not aiming: drop the head-lead cap so the head motion reverts to stock behavior.
+            removeAnimationData("CombatHeadLeadMaxRad");
             if (isMotionActive(ANIM_BD_ML_AIM_MOTION))
             {
                 stopMotion(ANIM_BD_ML_AIM_MOTION);
@@ -6034,6 +6198,13 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
                 mCombatAim = NULL;
             }
         }
+
+        // NOTE: an earlier version explicitly requested ANIM_AGENT_TURNLEFT/RIGHT here to play a
+        // turn-in-place animation, but those are walk-based keyframe motions that TRANSLATE the
+        // avatar at zero control-speed. That drift registered as velocity, which made the avatar
+        // read as "moving" (forcing the locomotion threshold + walk animation), which translated it
+        // further -- a feedback loop ("shift in place"). The decisive leg sweep in updateOrientation
+        // already turns the legs smoothly in place, so no walk-based turn anim is triggered.
     }
 
     // update animations
@@ -6049,6 +6220,59 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     {
         // Might be better to do HIDDEN_UPDATE if cloud
         updateMotions(LLCharacter::NORMAL_UPDATE);
+    }
+
+    // SkoomaStorm TEMPORARY combat-aim diagnostics: one rich line per ~2 frames for the SELF avatar
+    // once it is FULLY LOADED (skip the cloud-rez window, where the skeleton is being (re)built and
+    // a getJoint() can hand back a joint that is about to be freed -> getWorldRotation() then derefs
+    // freed memory and crashes). Not gated on aim, so we still capture all real gameplay and can SEE
+    // whether/when combat-aim engages. Emitted post updateMotions so joint rotations are final.
+    if (isSelf() && isFullyLoaded() && (gFrameCount & 1u) == 0u)
+    {
+        static LLCachedControl<bool> d_body_aim(gSavedSettings, "SSCombatBodyAim", true);
+        bool d_aiming = d_body_aim && (gAgentCamera.cameraOTS() || gAgentCamera.cameraMouselook());
+        bool d_mot = isMotionActive(ANIM_BD_ML_AIM_MOTION);
+        LLViewerCamera* dcam = LLViewerCamera::getInstance();
+        LLVector3 cax = dcam->getAtAxis();
+        F32 cam_pitch = asinf(llclamp(cax.mV[VZ], -1.f, 1.f)) * RAD_TO_DEG;
+        F32 cam_yaw = atan2f(cax.mV[VY], cax.mV[VX]) * RAD_TO_DEG;
+        U32 cf = gAgent.getControlFlags();
+        LLVector3 vel = getVelocity();
+        auto jeuler = [this](const char* n) -> std::string
+        {
+            LLJoint* j = getJoint(n);
+            if (!j) return "na";
+            F32 r, p, y;
+            j->getWorldRotation().getEulerAngles(&r, &p, &y);
+            return llformat("%.1f/%.1f/%.1f", r * RAD_TO_DEG, p * RAD_TO_DEG, y * RAD_TO_DEG);
+        };
+        LL_INFOS("AimDiag") << "f=" << gFrameCount
+            << " | AIM aiming=" << d_aiming << " mot=" << d_mot << " bodyaimset=" << (bool)d_body_aim
+            << " chestValid=" << gAimDiag.chest_valid
+            << " | INPUT cf=" << llformat("0x%08x", cf)
+            << " fwd=" << (bool)(cf & AGENT_CONTROL_AT_POS) << " back=" << (bool)(cf & AGENT_CONTROL_AT_NEG)
+            << " sleft=" << (bool)(cf & AGENT_CONTROL_LEFT_POS) << " sright=" << (bool)(cf & AGENT_CONTROL_LEFT_NEG)
+            << " yawL=" << (bool)(cf & AGENT_CONTROL_YAW_POS) << " yawR=" << (bool)(cf & AGENT_CONTROL_YAW_NEG)
+            << " | CAM ml=" << gAgentCamera.cameraMouselook() << " ots=" << gAgentCamera.cameraOTS()
+            << " pitch=" << cam_pitch << " yaw=" << cam_yaw << " angspd=" << dcam->getAverageAngularSpeed()
+            << " | MOVE spd=" << mSpeed << " vel=" << llformat("%.2f,%.2f,%.2f", vel.mV[VX], vel.mV[VY], vel.mV[VZ])
+            << " air=" << mInAir << " turning=" << mTurning
+            << " walk=" << (mSignaledAnimations.find(ANIM_AGENT_WALK) != mSignaledAnimations.end())
+            << " run=" << (mSignaledAnimations.find(ANIM_AGENT_RUN) != mSignaledAnimations.end())
+            << " tL=" << (mSignaledAnimations.find(ANIM_AGENT_TURNLEFT) != mSignaledAnimations.end())
+            << " tR=" << (mSignaledAnimations.find(ANIM_AGENT_TURNRIGHT) != mSignaledAnimations.end())
+            << " | ORIENT aim=" << gAimDiag.combat_aiming << " prim=" << gAimDiag.primdir_yaw
+            << " vel=" << gAimDiag.veldir_yaw << " fwdPre=" << gAimDiag.fwd_pre_yaw << " fwdPost=" << gAimDiag.fwd_post_yaw
+            << " pelvis=" << gAimDiag.pelvis_yaw << " angle=" << gAimDiag.orient_angle_deg
+            << " thresh=" << gAimDiag.pelvis_threshold_deg << " corr=" << gAimDiag.correction_mag
+            << " turning=" << gAimDiag.turning << " turnflag=" << gAimDiag.turn_flag
+            << " | CHEST la=" << llformat("%.2f,%.2f,%.2f", gAimDiag.lookat_x, gAimDiag.lookat_y, gAimDiag.lookat_z)
+            << " laPitch=" << gAimDiag.lookat_pitch_deg << " dev=" << gAimDiag.dev_angle_deg
+            << " axis=" << llformat("%.2f,%.2f,%.2f", gAimDiag.dev_axis_x, gAimDiag.dev_axis_y, gAimDiag.dev_axis_z)
+            << " hMax=" << gAimDiag.head_max_deg << " cMax=" << gAimDiag.chest_max_deg << " cAng=" << gAimDiag.chest_angle_deg
+            << " | JOINTS(r/p/y) pelvis=" << jeuler("mPelvis") << " torso=" << jeuler("mTorso")
+            << " chest=" << jeuler("mChest") << " neck=" << jeuler("mNeck") << " head=" << jeuler("mHead")
+            << LL_ENDL;
     }
 
     // Special handling for sitting on ground.

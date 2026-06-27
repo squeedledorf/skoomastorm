@@ -1859,7 +1859,95 @@
     <key>Type</key>
     <string>F32</string>
     <key>Value</key>
-    <real>60.0</real>
+    <real>85.0</real>
+  </map>
+  <key>SSCombatAimHeadMax</key>
+  <map>
+    <key>Comment</key>
+    <string>SkoomaStorm: degrees the HEAD leads before the chest/torso begins to twist while combat-aiming. The chest then follows the aim up to (SSCombatAimLegMaxDeviation minus this); the legs turn only past SSCombatAimLegMaxDeviation. Small values (~5-15) keep the torso following strongly; large values freeze the torso. Must be less than SSCombatAimLegMaxDeviation.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>5.0</real>
+  </map>
+  <key>SSCombatAimLockFacing</key>
+  <map>
+    <key>Comment</key>
+    <string>SkoomaStorm: while combat-aiming, keep the lower-body facing the aim instead of spinning to face the travel direction; movement reads as back-pedal/strafe against that facing (the legs still lean by SSCombatAimStrafeLean). Off restores the native turn-toward-movement blend.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>1</integer>
+  </map>
+  <key>SSCombatAimStrafeLean</key>
+  <map>
+    <key>Comment</key>
+    <string>SkoomaStorm: max degrees the legs lean toward the strafe/movement direction while combat-aiming with locked facing (0 = legs stay square to the aim). Leaning scales with the lateral movement and inverts when moving backward so back-strafe leans opposite the forward-strafe. Eases through zero at a pure sideways strafe.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>85.0</real>
+  </map>
+  <key>SSCombatAimLeanSmoothHalfLife</key>
+  <map>
+    <key>Comment</key>
+    <string>SkoomaStorm: half-life (seconds) for easing the lower-body strafe lean while combat-aiming. Higher = smoother/slower so changing movement direction glides instead of jerking; lower = snappier/more responsive.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>0.025</real>
+  </map>
+  <key>SSCombatAimHeadTorsoMax</key>
+  <map>
+    <key>Comment</key>
+    <string>SkoomaStorm: max degrees the head may lead the chest/torso while combat-aiming. Keeps the head stuck with the torso instead of pinning at its limit and riding the body when the legs lag far from the aim. Lower = head glued to torso; higher = head tracks the aim more independently.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>35.0</real>
+  </map>
+  <key>SSCombatAimChestSmoothHalfLife</key>
+  <map>
+    <key>Comment</key>
+    <string>SkoomaStorm: half-life (seconds) for easing the chest/torso aim twist while combat-aiming. Higher = smoother/slower settle. Softens the head-to-torso handoff.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>0.025</real>
+  </map>
+  <key>SSCombatAimChestMaxPitch</key>
+  <map>
+    <key>Comment</key>
+    <string>SkoomaStorm: max degrees the chest/torso may pitch up or down toward the aim while combat-aiming. Clamps the aim away from vertical so the torso does not contort/roll when you look straight up or down (the head and camera still pitch fully).</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>55.0</real>
+  </map>
+  <key>SSCombatAimTurnSettle</key>
+  <map>
+    <key>Comment</key>
+    <string>SkoomaStorm: when combat-aiming and the legs are forced to turn in place, how close (degrees) to the aim the legs sweep before the turn finishes. Smaller = the legs turn more fully to face the aim; the wide hysteresis (turn starts at SSCombatAimLegMaxDeviation, ends here) makes one smooth turn that the turn-in-place animation rides instead of jittery little snaps.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>8.0</real>
   </map>
   <key>PrivateLookAtTarget</key>
   <map>

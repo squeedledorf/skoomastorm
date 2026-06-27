@@ -1774,6 +1774,27 @@ void LLAgentCamera::validateFocusObject()
     }
 }
 
+// SkoomaStorm: build the OTS camera frame from the agent's look direction, but carry the AZIMUTH
+// through the vertical pole and force zero roll, so the shoulder camera does not gimbal-spin when
+// you aim straight up or down. For a normal (non-vertical, roll-free) look this reproduces the agent
+// frame exactly; near vertical it holds the last good azimuth instead of letting it whip around.
+static LLQuaternion ots_stable_frame(const LLVector3& agent_at, const LLVector3& agent_left)
+{
+    // Heading (azimuth) is taken from the agent's LEFT axis, which stays horizontal through the
+    // vertical pole AND keeps following the user's yaw even when looking straight up/down. (Deriving
+    // it from the at-axis instead gimbal-locks at vertical: it spins when held still, and worse, it
+    // stops following mouse-yaw so the body turns under a frozen view.) Pitch comes from the at-axis;
+    // roll is forced to zero.
+    LLVector3 heading = agent_left % LLVector3(0.f, 0.f, 1.f); // left x world-up = horizontal forward
+    F32 yaw = atan2f(heading.mV[VY], heading.mV[VX]);
+    F32 pitch = asinf(llclamp(agent_at.mV[VZ], -1.f, 1.f));
+    F32 cy = cosf(yaw), sy = sinf(yaw), cp = cosf(pitch), sp = sinf(pitch);
+    LLVector3 fwd(cp * cy, cp * sy, sp);
+    LLVector3 left(-sy, cy, 0.f);
+    LLVector3 up = fwd % left;
+    return LLQuaternion(fwd, left, up);
+}
+
 //-----------------------------------------------------------------------------
 // calcFocusPositionTargetGlobal()
 //-----------------------------------------------------------------------------
@@ -1795,9 +1816,20 @@ LLVector3d LLAgentCamera::calcFocusPositionTargetGlobal()
         static LLCachedControl<F32> ots_focus_dist(gSavedSettings, "OTSFocusDistance", 10.0f);
         static LLCachedControl<F32> ots_height(gSavedSettings,     "OTSCameraHeight",   0.5f);
         static LLCachedControl<F32> ots_side(gSavedSettings,       "OTSCameraSide",    -0.5f);
-        LLVector3 focus_local((F32)ots_focus_dist, (F32)ots_side * 0.3f, (F32)ots_height * 0.5f);
-        LLQuaternion agent_rot = gAgent.getFrameAgent().getQuaternion();
-        LLVector3 focus_world = focus_local * agent_rot;
+        // SkoomaStorm: near vertical the shoulder-offset geometry would swing the look azimuth around
+        // the pole (the forward part shrinks to zero while the side/height offsets stay, so they take
+        // over the look direction). Keep the normal OTS framing for shallow aim, but as the aim nears
+        // vertical blend the focus to sit straight ahead of the CAMERA along the aim, so the look
+        // direction is the aim itself (azimuth = carried yaw) and stops swinging. The camera POSITION
+        // keeps its full over-the-shoulder offset, so it does not slide/pull in toward the avatar.
+        static LLCachedControl<F32> ots_dist_f(gSavedSettings, "OTSCameraDistance", 3.0f);
+        LLVector3 agent_at = gAgent.getFrameAgent().getAtAxis();
+        F32 ots_vfade = clamp_rescale(sqrtf(agent_at.mV[VX] * agent_at.mV[VX] + agent_at.mV[VY] * agent_at.mV[VY]), 0.10f, 0.40f, 0.f, 1.f);
+        LLQuaternion agent_rot = ots_stable_frame(agent_at, gAgent.getFrameAgent().getLeftAxis());
+        LLVector3 framing_focus = LLVector3((F32)ots_focus_dist, (F32)ots_side * 0.3f, (F32)ots_height * 0.5f) * agent_rot;
+        LLVector3 cam_offset    = LLVector3(-(F32)ots_dist_f, (F32)ots_side, (F32)ots_height) * agent_rot;
+        LLVector3 along_focus   = cam_offset + (LLVector3(1.f, 0.f, 0.f) * agent_rot) * (F32)ots_focus_dist;
+        LLVector3 focus_world   = lerp(along_focus, framing_focus, ots_vfade);
         LLVector3d avatar_pos = gAgent.getPosGlobalFromAgent(getAvatarRootPosition());
         mFocusTargetGlobal = avatar_pos + LLVector3d(focus_world);
         return mFocusTargetGlobal;
@@ -1991,8 +2023,11 @@ LLVector3d LLAgentCamera::calcCameraPositionTargetGlobal(bool *hit_limit)
         static LLCachedControl<F32> ots_dist(gSavedSettings,   "OTSCameraDistance", 3.0f);
         static LLCachedControl<F32> ots_side(gSavedSettings,   "OTSCameraSide",    -0.5f);
         static LLCachedControl<F32> ots_height(gSavedSettings, "OTSCameraHeight",   0.5f);
+        // SkoomaStorm: full over-the-shoulder offset (no pull-in). The look-direction stabilization
+        // near vertical is handled entirely in calcFocusPositionTargetGlobal (the focus eases to
+        // straight ahead of the camera), so the position keeps its offset and does not slide.
         LLVector3 local_offset(-(F32)ots_dist, (F32)ots_side, (F32)ots_height);
-        LLQuaternion agent_rot = gAgent.getFrameAgent().getQuaternion();
+        LLQuaternion agent_rot = ots_stable_frame(gAgent.getFrameAgent().getAtAxis(), gAgent.getFrameAgent().getLeftAxis());
         LLVector3 world_offset = local_offset * agent_rot;
         LLVector3 avatar_pos_agent = getAvatarRootPosition();
         LLVector3 cam_pos_agent = avatar_pos_agent + world_offset;

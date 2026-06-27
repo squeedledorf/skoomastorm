@@ -233,6 +233,26 @@ bool LLHeadRotMotion::onUpdate(F32 time, U8* joint_mask)
     LLQuaternion head_rot_local = targetHeadRotWorld * currentInvRootRotWorld;
     head_rot_local.constrain(HEAD_ROTATION_CONSTRAINT);
 
+    // SkoomaStorm combat aim: cap how far the head may lead the CHEST/torso, so the head sticks with
+    // the torso instead of pinning at its root constraint and riding with the body when the legs lag
+    // far from the aim. Active only when the feeder publishes "CombatHeadLeadMaxRad" (self avatar
+    // while combat-aiming); stock behavior is otherwise unchanged. The cap is applied to the head's
+    // rotation relative to the chest's current world rotation, then folded back into root-local space.
+    F32* headLeadPtr = (F32*)mCharacter->getAnimationData("CombatHeadLeadMaxRad");
+    if (headLeadPtr)
+    {
+        LLJoint* chestJoint = mCharacter->getJoint("mChest");
+        if (chestJoint)
+        {
+            LLQuaternion headWorld    = head_rot_local * currentRootRotWorld;
+            LLQuaternion chestWorld   = chestJoint->getWorldRotation();
+            LLQuaternion headRelChest = headWorld * ~chestWorld;
+            headRelChest.constrain(*headLeadPtr);
+            headWorld      = headRelChest * chestWorld;
+            head_rot_local = headWorld * currentInvRootRotWorld;
+        }
+    }
+
     // set final torso rotation
     // Set torso target rotation such that it lags behind the head rotation
     // by a fixed amount.
