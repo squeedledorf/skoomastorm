@@ -1259,11 +1259,6 @@ public:
     // Hysteresis latch for whether movement is "backward" (inverts the strafe lean). Held through a
     // deadband around perpendicular so a pure sideways strafe keeps a stable lean instead of flipping.
     bool mCombatLeanBackward = false;
-    // SkoomaStorm turn-in-place: direction the legs are turning this frame while combat-aiming
-    // (-1 = left, +1 = right, 0 = not turning), set in updateOrientation; and the turn-in-place
-    // animation currently requested from it (so we only send start/stop on a change, not every frame).
-    S32 mCombatTurnDir = 0;
-    S32 mCombatTurnAnimPlaying = 0;
 
     //--------------------------------------------------------------------
     // Step sound

@@ -284,6 +284,17 @@ A new folder has been created for each item you have transferred into the top le
   </notification>
 
   <notification
+   icon="alertmodal.tga"
+   name="SSDynamicMovementWarning"
+   type="alertmodal">
+Dynamic Movement is an in-development feature. While it is enabled your avatar may look strange or behave in undesired ways. You are enabling it at your own risk.
+    <usetemplate
+     ignoretext="Warn me when I enable Dynamic Movement"
+     name="okignore"
+     yestext="OK"/>
+  </notification>
+
+  <notification
    icon="OutboxStatus_Success"
    name="OutboxImportComplete"
    type="alertmodal">

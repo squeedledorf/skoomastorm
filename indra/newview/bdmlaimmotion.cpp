@@ -41,7 +41,6 @@
 #include "llviewercamera.h"
 #include "llagentcamera.h"
 #include "llagent.h"
-#include "aimdiag.h" // SkoomaStorm temporary combat-aim diagnostics
 
 //-----------------------------------------------------------------------------
 // Constants
@@ -270,31 +269,14 @@ bool BDMLAimMotion::onUpdate(F32 time, U8* joint_mask)
 	head_rot_local.getAngleAxis(&dev_angle, dev_axis);
 
 	LLQuaternion fresh_chest; // freshly-computed twist from the current aim (identity until head budget spent)
-	F32 chest_angle_dbg = 0.f; // SkoomaStorm diag
 	if (dev_angle > 1e-4f && dev_axis.magVecSquared() > 1e-6f)
 	{
 		F32 chest_angle = llclamp(dev_angle - head_max_rad, 0.f, chest_max_rad);
-		chest_angle_dbg = chest_angle;
 		if (chest_angle > 1e-4f)
 		{
 			dev_axis.normVec();
 			fresh_chest.setAngleAxis(chest_angle, dev_axis);
 		}
-	}
-
-	// SkoomaStorm diag (self only): record the chest staging inputs/outputs for this frame.
-	if ((const void*)mCharacter == gAimDiagSelf)
-	{
-		gAimDiag.chest_valid = true;
-		LLVector3 la = targetPos ? *targetPos : LLVector3::zero;
-		F32 lam = la.normVec();
-		gAimDiag.lookat_x = la.mV[0]; gAimDiag.lookat_y = la.mV[1]; gAimDiag.lookat_z = la.mV[2];
-		gAimDiag.lookat_pitch_deg = (lam > 0.f) ? asinf(llclamp(la.mV[2], -1.f, 1.f)) * RAD_TO_DEG : 0.f;
-		gAimDiag.dev_angle_deg = dev_angle * RAD_TO_DEG;
-		gAimDiag.dev_axis_x = dev_axis.mV[0]; gAimDiag.dev_axis_y = dev_axis.mV[1]; gAimDiag.dev_axis_z = dev_axis.mV[2];
-		gAimDiag.head_max_deg = (F32)s_aim_head_max;
-		gAimDiag.chest_max_deg = chest_max_rad * RAD_TO_DEG;
-		gAimDiag.chest_angle_deg = chest_angle_dbg * RAD_TO_DEG;
 	}
 
 	// Near vertical the aim axis is unstable and twisting about it ROLLS the torso (the up/down

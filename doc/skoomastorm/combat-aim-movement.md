@@ -8,6 +8,16 @@ combat camera is stabilized at the vertical pole.
 All behavior is gated on combat-aim being active, so non-combat locomotion is byte-for-byte
 stock. Everything is tunable live via Debug Settings (the `SSCombatAim*` keys below).
 
+## Dynamic vs Legacy (master toggle)
+
+`SSCombatBodyAim` is the user-facing **Dynamic Movement** toggle (Preferences > Soapstorm > Combat >
+Movement). On = the dynamic cascade below; off = stock **Legacy** locomotion (the whole feature is
+gated on it, so Legacy is byte-for-byte stock). It ships **default OFF** (opt-in) because the feature
+is in development. Enabling it shows a one-time warning ("at your own risk", OK + don't-show-again):
+notification `SSDynamicMovementWarning` (notifications.xml), fired by `handleCombatBodyAimChanged`
+in `llviewercontrol.cpp` when the control flips true after login. The OTS camera pole fixes are NOT
+gated on this (always on in OTS, since they're pure improvements).
+
 ## How it engages
 
 `LLVOAvatar::updateCharacter()` feeder (self only): when `SSCombatBodyAim` is on AND the camera

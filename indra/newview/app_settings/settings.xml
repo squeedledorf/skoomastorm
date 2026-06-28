@@ -1842,13 +1842,13 @@
   <key>SSCombatBodyAim</key>
   <map>
     <key>Comment</key>
-    <string>SkoomaStorm: pose the avatar's chest toward the aim direction in OTS/ADS/mouselook (viewer-local; only other SkoomaStorm viewers render it).</string>
+    <string>SkoomaStorm Dynamic Movement (IN DEVELOPMENT): while combat-aiming (OTS/mouselook) the avatar's head, torso and legs articulate toward the aim, with a stabilized over-the-shoulder camera. Off = Legacy (stock) movement. Enable at your own risk -- the avatar may look strange or behave in undesired ways. (Other SkoomaStorm viewers render the aim; stock viewers do not.)</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
     <string>Boolean</string>
     <key>Value</key>
-    <integer>1</integer>
+    <integer>0</integer>
   </map>
   <key>SSCombatAimLegMaxDeviation</key>
   <map>

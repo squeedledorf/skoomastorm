@@ -62,7 +62,6 @@
 #include "llheadrotmotion.h"
 #include "bdmlaimmotion.h"
 #include "llhudeffectcombataim.h"
-#include "aimdiag.h" // SkoomaStorm temporary combat-aim diagnostics
 #include "llhudeffecttrail.h"
 #include "llhudmanager.h"
 #include "llhudnametag.h"
@@ -176,9 +175,6 @@ const LLUUID ANIM_AGENT_HAND_MOTION = LLUUID("ce986325-0ba7-6e6e-cc24-b17c4b7955
 const LLUUID ANIM_AGENT_HEAD_ROT = LLUUID("e6e8d1dd-e643-fff7-b238-c6b4b056a68d");  //"head_rot"
 const LLUUID ANIM_BD_ML_AIM_MOTION = LLUUID("bd32048e-efa7-b57b-ac42-943678b40b08"); //"ml_aim"
 
-// SkoomaStorm temporary combat-aim diagnostics sink (see aimdiag.h). Remove before ship.
-AimDiagFrame gAimDiag = {};
-const void* gAimDiagSelf = nullptr;
 const LLUUID ANIM_AGENT_PELVIS_FIX = LLUUID("0c5dd2a2-514d-8893-d44d-05beffad208b");  //"pelvis_fix"
 const LLUUID ANIM_AGENT_TARGET = LLUUID("0e4896cb-fba4-926c-f355-8720189d5b55");  //"target"
 const LLUUID ANIM_AGENT_WALK_ADJUST = LLUUID("829bc85b-02fc-ec41-be2e-74cc6dd7215d");  //"walk_adjust"
@@ -5570,20 +5566,6 @@ void LLVOAvatar::updateOrientation(LLAgent& agent, F32 speed, F32 delta_time)
                 }
             }
 
-            // SkoomaStorm diag: capture pre-correction facing (self only). See aimdiag.h.
-            if (isSelf())
-            {
-                gAimDiagSelf = (const void*)this;
-                mCombatTurnDir = 0; // set to +/-1 below if the legs are turning this frame
-                gAimDiag.chest_valid = false; // set true by BDMLAimMotion::onUpdate when it runs this frame
-                gAimDiag.combat_aiming = combat_aiming;
-                gAimDiag.speed = speed;
-                gAimDiag.primdir_yaw = atan2f(primDir.mV[1], primDir.mV[0]) * RAD_TO_DEG;
-                gAimDiag.veldir_yaw  = atan2f(velDir.mV[1], velDir.mV[0]) * RAD_TO_DEG;
-                gAimDiag.fwd_pre_yaw = atan2f(fwdDir.mV[1], fwdDir.mV[0]) * RAD_TO_DEG;
-                gAimDiag.turn_flag = 0;
-            }
-
             LLQuaternion root_rotation = mRoot->getWorldMatrix().quaternion();
             F32 root_roll, root_pitch, root_yaw;
             root_rotation.getEulerAngles(&root_roll, &root_pitch, &root_yaw);
@@ -5634,7 +5616,6 @@ void LLVOAvatar::updateOrientation(LLAgent& agent, F32 speed, F32 delta_time)
             pelvis_rot_threshold *= DEG_TO_RAD;
 
             F32 angle = angle_between( pelvisDir, fwdDir );
-            F32 corr_mag_dbg = 0.f; // SkoomaStorm diag
 
             // The avatar's root is allowed to have a yaw that deviates widely
             // from the forward direction, but if roll or pitch are off even
@@ -5717,23 +5698,11 @@ void LLVOAvatar::updateOrientation(LLAgent& agent, F32 speed, F32 delta_time)
                     correction_factor = clamp_rescale(angle, pelvis_rot_threshold*0.75f, pelvis_rot_threshold, 1.0f, 0.0f);
                 }
                 LLVector3 correction_vector = (pelvisDir - fwdDir) * correction_factor;
-                corr_mag_dbg = correction_vector.magVec();
                 fwdDir += correction_vector;
             }
             else
             {
                 mTurning = false;
-            }
-
-            // SkoomaStorm diag: capture post-correction root/cone state (self only).
-            if (isSelf())
-            {
-                gAimDiag.turning = mTurning;
-                gAimDiag.orient_angle_deg = angle * RAD_TO_DEG;
-                gAimDiag.pelvis_threshold_deg = pelvis_rot_threshold * RAD_TO_DEG;
-                gAimDiag.pelvis_yaw = atan2f(pelvisDir.mV[1], pelvisDir.mV[0]) * RAD_TO_DEG;
-                gAimDiag.fwd_post_yaw = atan2f(fwdDir.mV[1], fwdDir.mV[0]) * RAD_TO_DEG;
-                gAimDiag.correction_mag = corr_mag_dbg;
             }
 
             // SkoomaStorm: guard against a degenerate forward direction. Looking straight up/down in
@@ -5760,12 +5729,10 @@ void LLVOAvatar::updateOrientation(LLAgent& agent, F32 speed, F32 delta_time)
                 if ((fwdDir % pelvisDir) * upDir > 0.f)
                 {
                     gAgent.setControlFlags(AGENT_CONTROL_TURN_RIGHT);
-                    if (isSelf()) { gAimDiag.turn_flag = 1; mCombatTurnDir = 1; }
                 }
                 else
                 {
                     gAgent.setControlFlags(AGENT_CONTROL_TURN_LEFT);
-                    if (isSelf()) { gAimDiag.turn_flag = -1; mCombatTurnDir = -1; }
                 }
             }
 
@@ -6143,7 +6110,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     // (LLHUDEffectCombatAim); the real lookat is suppressed during combat so no crosshair leaks.
     if (isSelf())
     {
-        static LLCachedControl<bool> combat_body_aim(gSavedSettings, "SSCombatBodyAim", true);
+        static LLCachedControl<bool> combat_body_aim(gSavedSettings, "SSCombatBodyAim", false);
         // cameraMouselook() is true in mouselook, OTS, and all ADS states.
         const bool aiming = combat_body_aim
             && ( gAgentCamera.cameraOTS()
@@ -6222,58 +6189,6 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
         updateMotions(LLCharacter::NORMAL_UPDATE);
     }
 
-    // SkoomaStorm TEMPORARY combat-aim diagnostics: one rich line per ~2 frames for the SELF avatar
-    // once it is FULLY LOADED (skip the cloud-rez window, where the skeleton is being (re)built and
-    // a getJoint() can hand back a joint that is about to be freed -> getWorldRotation() then derefs
-    // freed memory and crashes). Not gated on aim, so we still capture all real gameplay and can SEE
-    // whether/when combat-aim engages. Emitted post updateMotions so joint rotations are final.
-    if (isSelf() && isFullyLoaded() && (gFrameCount & 1u) == 0u)
-    {
-        static LLCachedControl<bool> d_body_aim(gSavedSettings, "SSCombatBodyAim", true);
-        bool d_aiming = d_body_aim && (gAgentCamera.cameraOTS() || gAgentCamera.cameraMouselook());
-        bool d_mot = isMotionActive(ANIM_BD_ML_AIM_MOTION);
-        LLViewerCamera* dcam = LLViewerCamera::getInstance();
-        LLVector3 cax = dcam->getAtAxis();
-        F32 cam_pitch = asinf(llclamp(cax.mV[VZ], -1.f, 1.f)) * RAD_TO_DEG;
-        F32 cam_yaw = atan2f(cax.mV[VY], cax.mV[VX]) * RAD_TO_DEG;
-        U32 cf = gAgent.getControlFlags();
-        LLVector3 vel = getVelocity();
-        auto jeuler = [this](const char* n) -> std::string
-        {
-            LLJoint* j = getJoint(n);
-            if (!j) return "na";
-            F32 r, p, y;
-            j->getWorldRotation().getEulerAngles(&r, &p, &y);
-            return llformat("%.1f/%.1f/%.1f", r * RAD_TO_DEG, p * RAD_TO_DEG, y * RAD_TO_DEG);
-        };
-        LL_INFOS("AimDiag") << "f=" << gFrameCount
-            << " | AIM aiming=" << d_aiming << " mot=" << d_mot << " bodyaimset=" << (bool)d_body_aim
-            << " chestValid=" << gAimDiag.chest_valid
-            << " | INPUT cf=" << llformat("0x%08x", cf)
-            << " fwd=" << (bool)(cf & AGENT_CONTROL_AT_POS) << " back=" << (bool)(cf & AGENT_CONTROL_AT_NEG)
-            << " sleft=" << (bool)(cf & AGENT_CONTROL_LEFT_POS) << " sright=" << (bool)(cf & AGENT_CONTROL_LEFT_NEG)
-            << " yawL=" << (bool)(cf & AGENT_CONTROL_YAW_POS) << " yawR=" << (bool)(cf & AGENT_CONTROL_YAW_NEG)
-            << " | CAM ml=" << gAgentCamera.cameraMouselook() << " ots=" << gAgentCamera.cameraOTS()
-            << " pitch=" << cam_pitch << " yaw=" << cam_yaw << " angspd=" << dcam->getAverageAngularSpeed()
-            << " | MOVE spd=" << mSpeed << " vel=" << llformat("%.2f,%.2f,%.2f", vel.mV[VX], vel.mV[VY], vel.mV[VZ])
-            << " air=" << mInAir << " turning=" << mTurning
-            << " walk=" << (mSignaledAnimations.find(ANIM_AGENT_WALK) != mSignaledAnimations.end())
-            << " run=" << (mSignaledAnimations.find(ANIM_AGENT_RUN) != mSignaledAnimations.end())
-            << " tL=" << (mSignaledAnimations.find(ANIM_AGENT_TURNLEFT) != mSignaledAnimations.end())
-            << " tR=" << (mSignaledAnimations.find(ANIM_AGENT_TURNRIGHT) != mSignaledAnimations.end())
-            << " | ORIENT aim=" << gAimDiag.combat_aiming << " prim=" << gAimDiag.primdir_yaw
-            << " vel=" << gAimDiag.veldir_yaw << " fwdPre=" << gAimDiag.fwd_pre_yaw << " fwdPost=" << gAimDiag.fwd_post_yaw
-            << " pelvis=" << gAimDiag.pelvis_yaw << " angle=" << gAimDiag.orient_angle_deg
-            << " thresh=" << gAimDiag.pelvis_threshold_deg << " corr=" << gAimDiag.correction_mag
-            << " turning=" << gAimDiag.turning << " turnflag=" << gAimDiag.turn_flag
-            << " | CHEST la=" << llformat("%.2f,%.2f,%.2f", gAimDiag.lookat_x, gAimDiag.lookat_y, gAimDiag.lookat_z)
-            << " laPitch=" << gAimDiag.lookat_pitch_deg << " dev=" << gAimDiag.dev_angle_deg
-            << " axis=" << llformat("%.2f,%.2f,%.2f", gAimDiag.dev_axis_x, gAimDiag.dev_axis_y, gAimDiag.dev_axis_z)
-            << " hMax=" << gAimDiag.head_max_deg << " cMax=" << gAimDiag.chest_max_deg << " cAng=" << gAimDiag.chest_angle_deg
-            << " | JOINTS(r/p/y) pelvis=" << jeuler("mPelvis") << " torso=" << jeuler("mTorso")
-            << " chest=" << jeuler("mChest") << " neck=" << jeuler("mNeck") << " head=" << jeuler("mHead")
-            << LL_ENDL;
-    }
 
     // Special handling for sitting on ground.
     if (!getParent() && (isSitting() || was_sit_ground_constrained))

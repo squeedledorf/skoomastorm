@@ -1316,9 +1316,21 @@ void setting_setup_signal_listener(LLControlGroup& group, const std::string& set
     });
 }
 
+static bool handleCombatBodyAimChanged(const LLSD& newvalue)
+{
+    // Warn (once, with a "don't show again" checkbox) when the user opts into the in-development
+    // Dynamic Movement. Only on ENABLE, and only after login so it never fires while settings load.
+    if (newvalue.asBoolean() && LLStartUp::getStartupState() >= STATE_STARTED)
+    {
+        LLNotificationsUtil::add("SSDynamicMovementWarning");
+    }
+    return true;
+}
+
 void settings_setup_listeners()
 {
     LL_PROFILE_ZONE_SCOPED;
+    setting_setup_signal_listener(gSavedSettings, "SSCombatBodyAim", handleCombatBodyAimChanged);
     setting_setup_signal_listener(gSavedSettings, "FirstPersonAvatarVisible", handleRenderAvatarMouselookChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderFarClip", handleRenderFarClipChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderTerrainScale", handleTerrainScaleChanged);

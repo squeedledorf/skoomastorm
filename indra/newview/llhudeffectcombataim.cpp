@@ -143,7 +143,7 @@ void LLHUDEffectCombatAim::update()
         return;
     }
 
-    static LLCachedControl<bool> body_aim(gSavedSettings, "SSCombatBodyAim", true);
+    static LLCachedControl<bool> body_aim(gSavedSettings, "SSCombatBodyAim", false);
     F32 now = mTimer.getElapsedTimeF32();
 
     if (!body_aim || now > mKillTime)

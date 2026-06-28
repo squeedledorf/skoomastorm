@@ -10,7 +10,7 @@
  label="Combat"
  name="combat">
 
-    <!-- ===== Target identification ===== -->
+    <!-- ===== Movement ===== -->
     <text
      type="string"
      length="1"
@@ -20,6 +20,31 @@
      layout="topleft"
      left="10"
      top="10"
+     width="520">
+        Movement
+    </text>
+    <check_box
+     control_name="SSCombatBodyAim"
+     follows="left|top"
+     height="16"
+     label="Dynamic Movement (in development)"
+     layout="topleft"
+     left="10"
+     name="SSCombatBodyAim"
+     top_pad="8"
+     tool_tip="While aiming in combat (OTS/mouselook) the head, torso and legs articulate toward your aim, with a stabilized over-the-shoulder camera. Off = Legacy (stock) movement. In development -- enable at your own risk; your avatar may look strange or behave in undesired ways."
+     width="340" />
+
+    <!-- ===== Target identification ===== -->
+    <text
+     type="string"
+     length="1"
+     follows="left|top"
+     font="SansSerifSmallBold"
+     height="16"
+     layout="topleft"
+     left="10"
+     top_pad="14"
      width="520">
         Target Identification
     </text>
