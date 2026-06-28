@@ -137,6 +137,28 @@ static std::string killfeed_name(const LLUUID& id, bool allow_request = true)
     return "(resolving)";
 }
 
+// Live world position of the avatar behind a kill-feed id (self, or any rezzed avatar in the
+// object list). Used for the killer->victim distance; the combat event's source_pos is the
+// killing OBJECT (next to the victim at impact), not the killer avatar.
+static bool killfeed_avatar_pos(const LLUUID& id, LLVector3d& out)
+{
+    if (id.isNull())
+    {
+        return false;
+    }
+    if (id == gAgent.getID())
+    {
+        out = gAgent.getPositionGlobal();
+        return true;
+    }
+    if (LLViewerObject* obj = gObjectList.findObject(id))
+    {
+        out = obj->getPositionGlobal();
+        return true;
+    }
+    return false;
+}
+
 // static
 void FSFloaterKillFeed::addEntry(const LLSD& event)
 {
@@ -158,14 +180,15 @@ void FSFloaterKillFeed::addEntry(const LLSD& event)
     entry.mType = event.has("type") ? (S32)event["type"].asInteger() : -1000;
     entry.mDamage = event.has("damage") ? (F32)event["damage"].asReal() : -1.f;
 
+    // Distance is KILLER avatar -> VICTIM avatar, NOT the killing object -> victim. The combat
+    // event's source_pos is the projectile/weapon object (right next to the victim at impact, so it
+    // read as ~0m); use the two avatars' live world positions instead. If either avatar is not
+    // loaded (e.g. a distant killer), leave the distance unset rather than show a bogus one.
     entry.mDistance = -1.f;
-    const LLSD& spos = event["source_pos"];
-    const LLSD& tpos = event["target_pos"];
-    if (spos.isArray() && spos.size() >= 3 && tpos.isArray() && tpos.size() >= 3)
+    LLVector3d killer_pos, victim_pos;
+    if (killfeed_avatar_pos(entry.mKiller, killer_pos) && killfeed_avatar_pos(entry.mVictim, victim_pos))
     {
-        LLVector3 sv((F32)spos[0].asReal(), (F32)spos[1].asReal(), (F32)spos[2].asReal());
-        LLVector3 tv((F32)tpos[0].asReal(), (F32)tpos[1].asReal(), (F32)tpos[2].asReal());
-        entry.mDistance = (tv - sv).length();
+        entry.mDistance = (F32)(killer_pos - victim_pos).length();
     }
 
     entry.mReceivedTime = LLFrameTimer::getTotalSeconds();
@@ -316,6 +339,7 @@ void FSFloaterKillFeed::drawOverlay()
     static LLCachedControl<std::string> font_name(gSavedSettings, "FSKillFeedFontName", "SansSerif");
     static LLCachedControl<LLColor4> text_color(gSavedSettings, "FSKillFeedTextColor", LLColor4::white);
     static LLCachedControl<bool> bold_text(gSavedSettings, "FSKillFeedBoldText", false);
+    static LLCachedControl<bool> grow_up(gSavedSettings, "FSKillFeedGrowUp", false);
 
     const F64 now = LLFrameTimer::getTotalSeconds();
     const LLColor4 default_color = text_color;
@@ -328,7 +352,9 @@ void FSFloaterKillFeed::drawOverlay()
              it != sEntries.rend() && seglines.size() < (size_t)max_lines;
              ++it)
         {
-            if (now - it->mReceivedTime > (F64)hold_time)
+            // Hold (sec) of 0 means "never fade" -- keep the newest lines on screen
+            // forever (capped by Max lines / MAX_ENTRIES), so skip the age cutoff.
+            if (hold_time > 0.f && now - it->mReceivedTime > (F64)hold_time)
             {
                 break; // entries are time-ordered; everything older follows
             }
@@ -390,11 +416,25 @@ void FSFloaterKillFeed::drawOverlay()
                    (F32)view_height * llclamp((F32)screen_y, 0.f, 1.f), 0.f);
     gGL.scalef(scale, scale, 1.f);
 
+    // The feed BLOCK stays in a FIXED position (always top-anchored, stacking downward) so toggling
+    // the grow direction does NOT move the text on screen. FSKillFeedGrowUp only reverses the line
+    // ORDER within that block: down = newest at the top, up = newest at the bottom. seglines[0] is
+    // always the newest line; the direction arrow (left gutter, so it never shifts the text) marks
+    // the newest line either way.
+    const std::string dir_arrow = grow_up ? "\xE2\x96\xB2" : "\xE2\x96\xBC"; // U+25B2 / U+25BC
+    const F32 arrow_gutter = font->getWidthF32(dir_arrow) + 4.f;
+    const size_t n_lines = seglines.size();
     F32 y = 0.f;
-    for (const std::vector<KFSegment>& segs : seglines)
+    for (size_t pos = 0; pos < n_lines; ++pos) // pos 0 = top line of the (fixed) block
     {
+        const size_t idx = grow_up ? (n_lines - 1 - pos) : pos; // grow up -> oldest at top, newest at bottom
+        if (idx == 0) // the newest line
+        {
+            font->renderUTF8(dir_arrow, 0, -arrow_gutter, y, default_color,
+                             LLFontGL::LEFT, LLFontGL::TOP, font_style, LLFontGL::DROP_SHADOW_SOFT);
+        }
         F32 x = 0.f;
-        for (const KFSegment& seg : segs)
+        for (const KFSegment& seg : seglines[idx])
         {
             font->renderUTF8(seg.text, 0, x, y, seg.color,
                              LLFontGL::LEFT, LLFontGL::TOP, font_style, LLFontGL::DROP_SHADOW_SOFT);
