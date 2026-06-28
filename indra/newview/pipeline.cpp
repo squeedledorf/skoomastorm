@@ -7393,6 +7393,14 @@ LLDrawable* LLPipeline::lineSegmentIntersectWorldGeometry(const LLVector4a& star
     // through them. When skip_phantom is set, step the ray past each phantom hit
     // and re-cast until we find solid geometry (or nothing). The cap bounds the
     // pathological case of many stacked phantom layers.
+    //
+    // "Phantom" here means anything the sim treats as non-solid, not just the
+    // FLAGS_PHANTOM flag. A phantom prim linked into a non-phantom linkset loses
+    // its phantom flag (the flag is per-linkset) but is typically still made
+    // non-colliding via Physics Shape Type = None. Checking the flag alone lets
+    // the camera/aim ray collide with "see-through" grass, windows, etc. that the
+    // avatar capsule passes through; we also skip PHYSICS_SHAPE_NONE prims so the
+    // ray matches what actually collides in-world.
     const S32 MAX_PHANTOM_SKIPS = 16;
 
     LLVector4a seg_start = start;
@@ -7432,9 +7440,9 @@ LLDrawable* LLPipeline::lineSegmentIntersectWorldGeometry(const LLVector4a& star
         if (skip_phantom)
         {
             const LLViewerObject* obj = drawable->getVObj();
-            if (obj && obj->flagPhantom())
+            if (obj && (obj->flagPhantom() || obj->getPhysicsShapeType() == LLViewerObject::PHYSICS_SHAPE_NONE))
             {
-                // Advance just past this phantom surface and keep looking.
+                // Advance just past this non-solid surface and keep looking.
                 LLVector3 s(seg_start.getF32ptr());
                 LLVector3 e(end.getF32ptr());
                 LLVector3 hit_pos(local_end.getF32ptr());
