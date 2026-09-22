@@ -59,8 +59,12 @@ const float OCOL_FOG_MARCH_M = 512.0;
 // The bank noise: feature size (metres per lattice cell), the layer-top roll (metres the
 // banks lift and lower the ground fog's top), and the tile period in cells. LOCKSTEP
 // SSHeightFog::renderOCOL wraps the drift offsets to OCOL_FOG_FEATURE_M * OCOL_FOG_TILE_CELLS.
-const float OCOL_FOG_FEATURE_M = 64.0;
-const float OCOL_FOG_ROLL_M = 6.0;
+// Bank size and layer-top roll are settings (OCOLHeightFogFeatureM / OCOLHeightFogRollM), so
+// they can be tuned live from the Simulation floater.
+uniform float ocolFogFeatureM;
+uniform float ocolFogRollM;
+#define OCOL_FOG_FEATURE_M ocolFogFeatureM
+#define OCOL_FOG_ROLL_M ocolFogRollM
 const int   OCOL_FOG_TILE_CELLS = 64;
 
 out vec4 frag_color;

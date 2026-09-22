@@ -28267,6 +28267,28 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>OCOLHeightFogFeatureM</key>
+      <map>
+      <key>Comment</key>
+      <string>Atmo Magic: the size of the volumetric height fog's banks in metres (16-256). The wind drift wraps to 64 of these, so the tile is seamless at any size</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>64.0</real>
+    </map>
+    <key>OCOLHeightFogRollM</key>
+      <map>
+      <key>Comment</key>
+      <string>Atmo Magic: how far the bank noise rolls the volumetric height fog's layer top up and down, in metres (0-20). 0 is a flat-topped layer with only the wisps left</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>6.0</real>
+    </map>
     <key>SSAtmoHeatShimmer</key>
       <map>
       <key>Comment</key>

@@ -21,7 +21,7 @@
  border="false"
  top="0"
  left="0"
- height="400"
+ height="450"
  width="412">
 
     <text
@@ -130,4 +130,22 @@
       left="12" top_pad="6" height="16" width="380"
       label="Compare exponent sources (cube vs flowmap region vs gradient setting)"
       tool_tip="Overlays the curves the flowmap's camera-region roughness exponent and the SSAtmoWindFlowGradient fallback WOULD give beside the live weather-cube curve, so which source is live and what each would do is visible at once. Only the cube's curve ever drives the sky" />
+
+    <!-- <SS:Nexii> Height fog diagnosis (SSAtmoHeightFogDebug), for both the flat veil and the OCOL march -->
+    <text
+      follows="left|top" layout="topleft"
+      left="12" top_pad="10" height="16" width="106"
+      name="T_heightfog_debug"
+      tool_tip="0 off, 1 the fog amount as grey, 2 the march's midpoint density">
+        Height fog view:
+    </text>
+    <combo_box
+      control_name="SSAtmoHeightFogDebug" name="C_heightfog_debug"
+      follows="left|top" layout="topleft"
+      left_pad="4" top_delta="-2" height="20" width="250"
+      tool_tip="Off: the fog as rendered. Fog amount: the layer's opacity as grey. Density: the march's midpoint density, to see where the terms and the interior gate put fog">
+        <combo_box.item label="Off" value="0" name="heightfog_debug_off" />
+        <combo_box.item label="Fog amount" value="1" name="heightfog_debug_amount" />
+        <combo_box.item label="Density" value="2" name="heightfog_debug_density" />
+    </combo_box>
 </panel>

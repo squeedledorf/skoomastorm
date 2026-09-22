@@ -450,16 +450,22 @@ void SSHeightFog::renderOCOL(LLGLSLShader& shader, const LLVector3& wind)
 {
     static LLCachedControl<S32> ocol_steps(gSavedSettings, "OCOLHeightFogSteps", 32);
     static LLCachedControl<bool> ocol_shafts(gSavedSettings, "OCOLHeightFogShafts", true);
+    static LLCachedControl<F32> ocol_feature(gSavedSettings, "OCOLHeightFogFeatureM", 64.f);
+    static LLCachedControl<F32> ocol_roll(gSavedSettings, "OCOLHeightFogRollM", 6.f);
+    const F32 feature_m = llclamp((F32)ocol_feature, 16.f, 256.f);
+    const F32 roll_m = llclamp((F32)ocol_roll, 0.f, 20.f);
     static LLCachedControl<S32> debug_view(gSavedSettings, "SSAtmoHeightFogDebug", 0);
 
     static LLStaticHashedString fog_steps("ocolFogSteps");
     static LLStaticHashedString fog_shafts("ocolFogShafts");
+    static LLStaticHashedString fog_feature("ocolFogFeatureM");
+    static LLStaticHashedString fog_roll("ocolFogRollM");
     static LLStaticHashedString fog_drift0("ocolFogDrift0");
     static LLStaticHashedString fog_drift1("ocolFogDrift1");
     static LLStaticHashedString fog_res("ocolFogRes");
     static LLStaticHashedString fog_debug("ssFogDebug");
 
-    const F64 tile = 64.0 * 64.0;
+    const F64 tile = (F64)feature_m * 64.0; // OCOL_FOG_TILE_CELLS features per tile, as the shader wraps
     auto wrap = [tile](F64 v) { F64 r = fmod(v, tile); return (F32)(r < 0.0 ? r + tile : r); };
     const F64 now = (F64)(F32)gFrameTimeSeconds;
     const F32 drift0[3] = { wrap(-wind.mV[VX] * now), wrap(-wind.mV[VY] * now), wrap(-wind.mV[VZ] * now) };
@@ -480,6 +486,8 @@ void SSHeightFog::renderOCOL(LLGLSLShader& shader, const LLVector3& wind)
 
         shader.uniform1i(fog_steps, llclamp((S32)ocol_steps, 4, 128));
         shader.uniform1i(fog_shafts, ocol_shafts ? 1 : 0);
+        shader.uniform1f(fog_feature, feature_m);
+        shader.uniform1f(fog_roll, roll_m);
         shader.uniform3fv(fog_drift0, 1, drift0);
         shader.uniform3fv(fog_drift1, 1, drift1);
 
