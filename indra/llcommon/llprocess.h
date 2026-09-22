@@ -540,6 +540,11 @@ public:
     static std::string basename(const std::string& path);
     static std::string getline(std::istream&);
 
+    /// Drive pending pipe I/O and poll process status by hand, for a caller that
+    /// blocks in its own loop before the "mainloop" pump is ticking (the GPU
+    /// benchmark subprocess at startup). Same work the mainloop tick does.
+    void pump();
+
     // Non-copyable
     LLProcess(const LLProcess&) = delete;
     LLProcess& operator=(const LLProcess&) = delete;

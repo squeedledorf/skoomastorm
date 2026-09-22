@@ -942,6 +942,24 @@ static struct ReasonCode
 #undef tabent
 
 // Object-oriented callback
+void LLProcess::pump()
+{
+    // The status poll is process-wide (see LLProcessListener::tick); the pipe
+    // ticks are this process's own.
+    apr_proc_other_child_refresh_all(APR_OC_REASON_RUNNING);
+    for (auto& pipe : mPipes)
+    {
+        if (auto* rp = dynamic_cast<ReadPipeImpl*>(pipe.get()))
+        {
+            rp->tick(LLSD());
+        }
+        else if (auto* wp = dynamic_cast<WritePipeImpl*>(pipe.get()))
+        {
+            wp->tick(LLSD());
+        }
+    }
+}
+
 void LLProcess::handle_status(int reason, int status)
 {
     {
