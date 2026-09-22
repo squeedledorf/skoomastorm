@@ -13953,6 +13953,7 @@ bool LLPipeline::renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp,
     {
         if (hard_budget <= 0)
         {   // this frame's hard refreshes are spent: the uncached path draws this one
+            ++cache.mUncached;
             return false;
         }
         --hard_budget;
@@ -14008,7 +14009,14 @@ bool LLPipeline::renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp,
         cache.mFrame = gFrameCount;
         cache.mTime = gFrameTimeSeconds;
         cache.mValid = true;
-        ++mShadowCacheRefreshes[j];
+        if (hard)
+        {
+            ++cache.mHardRefreshes;
+        }
+        else
+        {
+            ++cache.mSoftRefreshes;
+        }
 
         LLCamera ccam = cache.mCamera;
         LLViewerCamera::setCurrent(ccam);
@@ -14394,13 +14402,6 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         // cascade draws uncached for the frame instead of stacking four static passes.
         const S32 soft_slot = use_cache ? pickShadowCacheSoftSlot(lightDir) : -1;
         S32 hard_budget = 2;
-        if (use_cache && (gFrameCount % 600) == 0)
-        {
-            LL_DEBUGS("ShadowCache") << "Cascade refreshes over the last 600 frames: "
-                                     << mShadowCacheRefreshes[0] << " " << mShadowCacheRefreshes[1] << " "
-                                     << mShadowCacheRefreshes[2] << " " << mShadowCacheRefreshes[3] << LL_ENDL;
-            mShadowCacheRefreshes[0] = mShadowCacheRefreshes[1] = mShadowCacheRefreshes[2] = mShadowCacheRefreshes[3] = 0;
-        }
         // </SS:ShadowCache>
 
         for (S32 j = 0; j < (gCubeSnapshot ? 2 : 4); j++)

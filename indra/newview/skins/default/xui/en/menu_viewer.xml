@@ -4256,6 +4256,16 @@
                  parameter="DebugShowRenderInfo" />
             </menu_item_check>
             <menu_item_check
+             label="Show Shadow Cache Info"
+             name="Show Shadow Cache Info">
+                <menu_item_check.on_check
+                 function="CheckControl"
+                 parameter="DebugShowShadowCache" />
+                <menu_item_check.on_click
+                 function="ToggleControl"
+                 parameter="DebugShowShadowCache" />
+            </menu_item_check>
+            <menu_item_check
              label="Show Projectile Info"
              name="Show Projectile Info">
                 <menu_item_check.on_check

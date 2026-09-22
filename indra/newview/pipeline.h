@@ -1064,9 +1064,11 @@ public:
         bool            mValid = false;
         bool            mDirty = false;      // a static change landed inside the box
         bool            mAllocFailed = false;
+        U32             mHardRefreshes = 0;  // for the Show Shadow Cache Info HUD
+        U32             mSoftRefreshes = 0;
+        U32             mUncached = 0;       // frames this cascade drew the old way (budget spent, no target)
     };
     ShadowCascadeCache      mShadowCache[4];
-    U32                     mShadowCacheRefreshes[4] = { 0, 0, 0, 0 };
     LLVector3               mShadowExtents[4][2];
     // TODO : separate Sun Shadow and Spot Shadow matrices
     LLMatrix4a              mSunShadowMatrix[6];
