@@ -230,6 +230,10 @@ void SSHeightFog::render()
             volumetric = false;
         }
     }
+    if (!volumetric && mOCOLTarget.isComplete())
+    {   // the flat veil is drawing; give the march target's VRAM back
+        mOCOLTarget.release();
+    }
     // </OCOL>
 
     LL_PROFILE_GPU_ZONE("atmo height fog");
@@ -396,11 +400,12 @@ void SSHeightFog::render()
     shader.uniform1f(fog_time, (F32)gFrameTimeSeconds);
 
     static LLCachedControl<S32> debug_view(gSavedSettings, "SSAtmoHeightFogDebug", 0);
-    shader.uniform1f(fog_debug, (F32)llclamp((S32)debug_view, 0, 2));
+    const F32 debug_f = (F32)llclamp((S32)debug_view, 0, 2);
+    shader.uniform1f(fog_debug, debug_f);
 
     if (volumetric)
     {
-        renderOCOL(shader, wind); // <OCOL>
+        renderOCOL(shader, wind, debug_f); // <OCOL>
     }
     else
     {
@@ -426,6 +431,10 @@ bool SSHeightFog::ensureOCOLTarget(U32 w, U32 h)
     {
         return true;
     }
+    if (mOCOLFailW == w && mOCOLFailH == h)
+    {   // already failed at this size; try again only when the size changes
+        return false;
+    }
 
     mOCOLTarget.release();
     // Storage is immutable, so the format has to be sized; half floats because the march
@@ -435,18 +444,23 @@ bool SSHeightFog::ensureOCOLTarget(U32 w, U32 h)
         LL_WARNS_ONCE("AtmoMagic") << "OCOL height fog target failed to allocate;"
                                       " flat height fog instead" << LL_ENDL;
         mOCOLTarget.release();
+        mOCOLFailW = w;
+        mOCOLFailH = h;
         return false;
     }
+    mOCOLFailW = mOCOLFailH = 0;
     return true;
 }
 
 // The march into mOCOLTarget, then the composite onto the screen. On entry the march program
 // is bound with mOCOLTarget as the draw target and every Atmo uniform uploaded; this adds only
 // what the volumetric shape needs - the shadow maps for the shafts, the step count, and the
-// bank noise's two drift offsets, which are Atmo's wind times time exactly as the wisp's are,
-// wrapped to the noise tile in double precision so the shader only ever sees small numbers
-// (LOCKSTEP OCOL_FOG_FEATURE_M * OCOL_FOG_TILE_CELLS, ocolHeightFogF.glsl).
-void SSHeightFog::renderOCOL(LLGLSLShader& shader, const LLVector3& wind)
+// bank noise's two drift offsets. Those are a running sum of the wind over the frames (the
+// wind gusts and varies with where the camera stands, so "wind times session time" would
+// throw the banks metres per frame), wrapped to the noise tile in double precision so the
+// shader only ever sees small numbers (LOCKSTEP OCOL_FOG_FEATURE_M * OCOL_FOG_TILE_CELLS,
+// ocolHeightFogF.glsl).
+void SSHeightFog::renderOCOL(LLGLSLShader& shader, const LLVector3& wind, F32 debug_view)
 {
     static LLCachedControl<S32> ocol_steps(gSavedSettings, "OCOLHeightFogSteps", 32);
     static LLCachedControl<bool> ocol_shafts(gSavedSettings, "OCOLHeightFogShafts", true);
@@ -454,7 +468,6 @@ void SSHeightFog::renderOCOL(LLGLSLShader& shader, const LLVector3& wind)
     static LLCachedControl<F32> ocol_roll(gSavedSettings, "OCOLHeightFogRollM", 33.5f);
     const F32 feature_m = llclamp((F32)ocol_feature, 16.f, 256.f);
     const F32 roll_m = llclamp((F32)ocol_roll, 0.f, 64.f);
-    static LLCachedControl<S32> debug_view(gSavedSettings, "SSAtmoHeightFogDebug", 0);
 
     static LLStaticHashedString fog_steps("ocolFogSteps");
     static LLStaticHashedString fog_shafts("ocolFogShafts");
@@ -466,10 +479,16 @@ void SSHeightFog::renderOCOL(LLGLSLShader& shader, const LLVector3& wind)
     static LLStaticHashedString fog_debug("ssFogDebug");
 
     const F64 tile = (F64)feature_m * 64.0; // OCOL_FOG_TILE_CELLS features per tile, as the shader wraps
-    auto wrap = [tile](F64 v) { F64 r = fmod(v, tile); return (F32)(r < 0.0 ? r + tile : r); };
-    const F64 now = (F64)(F32)gFrameTimeSeconds;
-    const F32 drift0[3] = { wrap(-wind.mV[VX] * now), wrap(-wind.mV[VY] * now), wrap(-wind.mV[VZ] * now) };
-    const F32 drift1[3] = { wrap(-wind.mV[VX] * now * 1.7), wrap(-wind.mV[VY] * now * 1.7), wrap(-wind.mV[VZ] * now * 1.7 + now * 0.15) };
+    auto wrap = [tile](F64 v) { F64 r = fmod(v, tile); return r < 0.0 ? r + tile : r; };
+    const F64 dt = llclamp((F64)gFrameIntervalSeconds, 0.0, 0.1);
+    for (U32 k = 0; k < 3; ++k)
+    {
+        mOCOLDrift0[k] = wrap(mOCOLDrift0[k] - wind.mV[k] * dt);
+        mOCOLDrift1[k] = wrap(mOCOLDrift1[k] - wind.mV[k] * dt * 1.7);
+    }
+    mOCOLDrift1[2] = wrap(mOCOLDrift1[2] + dt * 0.15);
+    const F32 drift0[3] = { (F32)mOCOLDrift0[0], (F32)mOCOLDrift0[1], (F32)mOCOLDrift0[2] };
+    const F32 drift1[3] = { (F32)mOCOLDrift1[0], (F32)mOCOLDrift1[1], (F32)mOCOLDrift1[2] };
 
     // 1. The march. The shafts read the sun shadow maps through shadowUtil.glsl, which wants
     // the shared shadow block, the maps, and the light direction it selects by sun_up_factor -
@@ -511,7 +530,7 @@ void SSHeightFog::renderOCOL(LLGLSLShader& shader, const LLVector3& wind)
         gOCOLHeightFogCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mOCOLTarget, ALSamplers::PointClamp);
         gOCOLHeightFogCompositeProgram.bindDepthTexture(LLShaderMgr::DEFERRED_DEPTH, &mDepthCopy, ALSamplers::PointClamp);
         gOCOLHeightFogCompositeProgram.uniform2f(fog_res, (GLfloat)mOCOLTarget.getWidth(), (GLfloat)mOCOLTarget.getHeight());
-        gOCOLHeightFogCompositeProgram.uniform1f(fog_debug, (F32)llclamp((S32)debug_view, 0, 2));
+        gOCOLHeightFogCompositeProgram.uniform1f(fog_debug, debug_view);
 
         gPipeline.mScreenTriangleVB->setBuffer();
         gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);

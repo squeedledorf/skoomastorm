@@ -107,6 +107,11 @@ void main()
     // nearest in depth rather than smearing the background's fog over them
     vec4 fog = (weight_sum <= 0.05) ? closest : sum / weight_sum;
 
+    if (ssFogDebug > 1.5)
+    {   // the march wrote the midpoint density view in rgb
+        frag_color = vec4(fog.rgb, 0.0);
+        return;
+    }
     if (ssFogDebug > 0.5)
     {
         frag_color = vec4(vec3(1.0 - fog.a), 0.0);

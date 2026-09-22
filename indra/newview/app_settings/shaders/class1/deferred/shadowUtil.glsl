@@ -644,3 +644,42 @@ float sampleSpotShadow(vec3 pos, vec3 norm, int index, vec2 pos_screen)
     return 1.0;
 #endif
 }
+
+// One compare tap on the cascade that holds the point, no blending, no derivatives, no
+// normal offset: for volumetric marches, which run in non-uniform control flow where the
+// receiver-plane bias's dFdx is undefined, and which only want the cheapest possible answer.
+float sampleDirectionalShadowSingleTap(vec3 pos)
+{
+#if defined(SUN_SHADOW)
+    vec4 spos = vec4(pos, 1.0);
+    if (spos.z <= -shadow_clip.w)
+    {
+        return 1.0;
+    }
+    float const_bias = shadow_bias * 2.0;
+    vec4 lpos;
+    if (spos.z < -shadow_clip.z)
+    {
+        lpos = shadow_matrix[3] * spos;
+        vec3 uvz = lpos.xyz / lpos.w; uvz.z += const_bias;
+        return filterShadowSingleTap(shadowMap3, uvz);
+    }
+    if (spos.z < -shadow_clip.y)
+    {
+        lpos = shadow_matrix[2] * spos;
+        vec3 uvz = lpos.xyz / lpos.w; uvz.z += const_bias;
+        return filterShadowSingleTap(shadowMap2, uvz);
+    }
+    if (spos.z < -shadow_clip.x)
+    {
+        lpos = shadow_matrix[1] * spos;
+        vec3 uvz = lpos.xyz / lpos.w; uvz.z += const_bias;
+        return filterShadowSingleTap(shadowMap1, uvz);
+    }
+    lpos = shadow_matrix[0] * spos;
+    vec3 uvz = lpos.xyz / lpos.w; uvz.z += const_bias;
+    return filterShadowSingleTap(shadowMap0, uvz);
+#else
+    return 1.0;
+#endif
+}
