@@ -332,6 +332,7 @@ void LLSpatialGroup::rebuildGeom()
     if (!isDead())
     {
         getSpatialPartition()->rebuildGeom(this);
+        noteStaticShadowChange(); // <SS:ShadowCache> the bounds after the rebuild, whichever partition did it
 
         if (hasState(LLSpatialGroup::MESH_DIRTY))
         {
@@ -404,12 +405,6 @@ void LLSpatialPartition::rebuildGeom(LLSpatialGroup* group)
 
     group->mLastUpdateTime = gFrameTimeSeconds;
     group->clearState(LLSpatialGroup::GEOM_DIRTY);
-
-    // <SS:ShadowCache> and the bounds it has after the rebuild, which may reach further
-    if (!isBridge())
-    {
-        gPipeline.shadowCacheNoteStaticChange(group->getObjectBounds()[0], group->getObjectBounds()[1]);
-    }
 }
 
 
@@ -536,12 +531,29 @@ void LLSpatialGroup::setState(U32 state, S32 mode)
         mState |= state;
     }
 
-    // <SS:ShadowCache> a static group about to change: its current bounds are what a cached
-    // sun cascade has drawn and must redraw.
-    if ((state & GEOM_DIRTY) && !getSpatialPartition()->isBridge())
+    if (state & GEOM_DIRTY)
     {
-        gPipeline.shadowCacheNoteStaticChange(mObjectBounds[0], mObjectBounds[1]);
+        noteStaticShadowChange(); // <SS:ShadowCache>
     }
+}
+
+// <SS:ShadowCache> A static group about to change, or just rebuilt: its bounds are what a
+// cached sun cascade has drawn and must redraw. Movers (bridges, avatars, animesh) draw
+// every frame and are not the cache's business; nor is the HUD.
+void LLSpatialGroup::noteStaticShadowChange()
+{
+    LLSpatialPartition* part = getSpatialPartition();
+    if (!part || part->isBridge())
+    {
+        return;
+    }
+    const U32 type = part->mPartitionType;
+    if (type == LLViewerRegion::PARTITION_BRIDGE || type == LLViewerRegion::PARTITION_AVATAR ||
+        type == LLViewerRegion::PARTITION_CONTROL_AV || type == LLViewerRegion::PARTITION_HUD)
+    {
+        return;
+    }
+    gPipeline.shadowCacheNoteStaticChange(mObjectBounds[0], mObjectBounds[1]);
 }
 
 class LLSpatialClearState : public OctreeTraveler

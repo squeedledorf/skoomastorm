@@ -326,7 +326,8 @@ public:
     void rebuildGeom();
     void rebuildMesh();
 
-    void setState(U32 state)       {mState |= state;}
+    void setState(U32 state)       { mState |= state; if (state & GEOM_DIRTY) noteStaticShadowChange(); } // <SS:ShadowCache>
+    void noteStaticShadowChange(); // <SS:ShadowCache> tell the sun shadow cache this static group changed
     void dirtyGeom() { setState(GEOM_DIRTY); }
     void dirtyMesh() { setState(MESH_DIRTY); }
 

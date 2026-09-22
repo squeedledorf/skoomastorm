@@ -1199,12 +1199,17 @@ bool LLPipeline::allocateShadowBuffer(U32 resX, U32 resY)
     // every side, so the map grows by the same factor and a texel stays the size it was.
     static LLCachedControl<bool> shadow_cache(gSavedSettings, "RenderShadowCache", true);
     static LLCachedControl<F32> shadow_cache_pad(gSavedSettings, "RenderShadowCachePad", 0.25f);
+    F32 sun_scale = scale; // the spot maps keep the plain scale
     if (shadow_cache && !gCubeSnapshot && mRT == &mMainRT)
     {
-        scale *= 1.f + 2.f * llclamp((F32)shadow_cache_pad, 0.f, 1.f);
+        sun_scale *= 1.f + 2.f * llclamp((F32)shadow_cache_pad, 0.02f, 1.f);
     }
-    U32 sun_shadow_map_width = BlurHappySize(resX, scale);
-    U32 sun_shadow_map_height = BlurHappySize(resY, scale);
+    if (mRT == &mMainRT)
+    {   // any reallocation voids the cached depth, the cache being toggled included
+        releaseShadowCache();
+    }
+    U32 sun_shadow_map_width = BlurHappySize(resX, sun_scale);
+    U32 sun_shadow_map_height = BlurHappySize(resY, sun_scale);
 
     // 32-bit float depth is the same 4 bytes/texel as DEPTH24 here but distributes precision
     // differently (float, denser near the near plane). Opt-in; toggling it re-runs this via
@@ -13836,9 +13841,7 @@ static LLRenderTarget::eDepthFormat shadowDepthFormat()
 
 void LLPipeline::shadowCacheNoteStaticChange(const LLVector4a& center, const LLVector4a& half)
 {
-    // Notes made while a shadow pass is itself rebuilding groups describe geometry that
-    // pass is drawing; the age refresh covers the rare group first built by a spot pass.
-    if (sShadowRender || mShadowCacheNotesOverflow)
+    if (mShadowCacheNotesOverflow)
     {
         return;
     }
@@ -13886,21 +13889,26 @@ bool LLPipeline::renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp,
     const LLMatrix4a cview = LLMatrix4a::lookDir(LLVector4a(0.f, 0.f, 0.f, 1.f),
                                                  LLVector4a(lightDir.mV[0], lightDir.mV[1], lightDir.mV[2]),
                                                  LLVector4a(cup.mV[0], cup.mV[1], cup.mV[2]));
-    LLVector3 bmin, bmax;
-    for (U32 i = 0; i < fp.size(); ++i)
+    // The slice's box in a given light basis.
+    auto slice_box = [&fp](const LLMatrix4a& view, LLVector3& bmin, LLVector3& bmax)
     {
-        LLVector4a p;
-        cview.affineTransform(LLVector4a(fp[i].mV[0], fp[i].mV[1], fp[i].mV[2], 1.f), p);
-        const LLVector3 v(p.getF32ptr());
-        if (i == 0)
+        for (U32 i = 0; i < fp.size(); ++i)
         {
-            bmin = bmax = v;
+            LLVector4a p;
+            view.affineTransform(LLVector4a(fp[i].mV[0], fp[i].mV[1], fp[i].mV[2], 1.f), p);
+            const LLVector3 v(p.getF32ptr());
+            if (i == 0)
+            {
+                bmin = bmax = v;
+            }
+            else
+            {
+                update_min_max(bmin, bmax, v);
+            }
         }
-        else
-        {
-            update_min_max(bmin, bmax, v);
-        }
-    }
+    };
+    LLVector3 bmin, bmax;
+    slice_box(cview, bmin, bmax);
 
     if (bmax.mV[0] - bmin.mV[0] < 0.01f || bmax.mV[1] - bmin.mV[1] < 0.01f)
     {   // a degenerate slice would snap to a zero texel
@@ -13909,13 +13917,18 @@ bool LLPipeline::renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp,
 
     const LLVector3d region_origin = gAgent.getRegion() ? gAgent.getRegion()->getOriginGlobal() : LLVector3d::zero;
     const F32 sun_cos = cosf(llclamp((F32)shadow_cache_sun, 0.f, 10.f) * DEG_TO_RAD);
-    const bool fits = cache.mValid
+    bool fits = cache.mValid
         && cache.mDepth.isComplete()
         && cache.mDepth.getWidth() == cw && cache.mDepth.getHeight() == ch
         && cache.mLightDir * lightDir >= sun_cos
-        && cache.mRegionOrigin == region_origin
-        && bmin.mV[0] >= cache.mMin.mV[0] && bmin.mV[1] >= cache.mMin.mV[1] && bmin.mV[2] >= cache.mMin.mV[2]
-        && bmax.mV[0] <= cache.mMax.mV[0] && bmax.mV[1] <= cache.mMax.mV[1] && bmax.mV[2] <= cache.mMax.mV[2];
+        && cache.mRegionOrigin == region_origin;
+    if (fits)
+    {   // the containment test in the basis the box was built in, not today's
+        LLVector3 tmin, tmax;
+        slice_box(cache.mView, tmin, tmax);
+        fits = tmin.mV[0] >= cache.mMin.mV[0] && tmin.mV[1] >= cache.mMin.mV[1] && tmin.mV[2] >= cache.mMin.mV[2]
+            && tmax.mV[0] <= cache.mMax.mV[0] && tmax.mV[1] <= cache.mMax.mV[1] && tmax.mV[2] <= cache.mMax.mV[2];
+    }
     bool refresh = !fits;
     if (fits && !soft_refreshed)
     {   // the reasons that can wait: one cascade per frame takes them
@@ -13942,7 +13955,7 @@ bool LLPipeline::renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp,
         }
 
         const LLVector3 size = bmax - bmin;
-        const F32 pad = llclamp((F32)shadow_cache_pad, 0.f, 1.f) * llmax(size.mV[0], size.mV[1]);
+        const F32 pad = llclamp((F32)shadow_cache_pad, 0.02f, 1.f) * llmax(size.mV[0], size.mV[1]);
         LLVector3 cmin = bmin - LLVector3(pad, pad, pad);
         LLVector3 cmax = bmax + LLVector3(pad, pad, pad);
         // Snap the box to its own texel grid so a refresh lands on the same sampling lattice.
@@ -13980,8 +13993,38 @@ bool LLPipeline::renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp,
         cache.mDepth.getViewport(gGLViewport);
         cache.mDepth.clear();
         static LLCullResult static_result[4];
+        const size_t notes_before = mShadowCacheNotes.size();
+        const bool overflow_before = mShadowCacheNotesOverflow;
         renderShadow(cache.mView, cache.mProj, ccam, static_result[j], true, true, SHADOW_CULL_STATIC);
         cache.mDepth.flush();
+
+        // Groups the refresh rebuilt on its way through are in this cascade's depth already;
+        // the other cascades still have to hear about them, now, so they are not lost.
+        if (mShadowCacheNotesOverflow && !overflow_before)
+        {
+            for (U32 c = 0; c < 4; ++c)
+            {
+                if (c != (U32)j) mShadowCache[c].mDirty = true;
+            }
+            mShadowCacheNotesOverflow = false;
+        }
+        else if (mShadowCacheNotes.size() > notes_before)
+        {
+            for (U32 c = 0; c < 4; ++c)
+            {
+                ShadowCascadeCache& other = mShadowCache[c];
+                if (c == (U32)j || !other.mValid || other.mDirty) continue;
+                for (size_t n = notes_before; n < mShadowCacheNotes.size(); ++n)
+                {
+                    if (other.mCamera.AABBInFrustum(mShadowCacheNotes[n].first, mShadowCacheNotes[n].second) > 0)
+                    {
+                        other.mDirty = true;
+                        break;
+                    }
+                }
+            }
+            mShadowCacheNotes.resize(notes_before);
+        }
     }
 
     LLCamera ccam = cache.mCamera;
@@ -14374,8 +14417,11 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 }
             }
         }
-        mShadowCacheNotes.clear();
-        mShadowCacheNotesOverflow = false;
+        if (use_cache)
+        {   // consumed; a probe or impostor pass leaves them for the next main frame
+            mShadowCacheNotes.clear();
+            mShadowCacheNotesOverflow = false;
+        }
         if (use_cache && (gFrameCount % 600) == 0)
         {
             LL_INFOS("ShadowCache") << "Cascade refreshes over the last 600 frames: "
