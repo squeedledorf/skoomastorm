@@ -3109,12 +3109,17 @@ bool LLPipeline::visibleObjectsInFrustum(LLCamera& camera)
     return false;
 }
 
-bool LLPipeline::getVisibleExtents(LLCamera& camera, LLVector3& min, LLVector3& max)
+bool LLPipeline::getVisibleExtents(LLCamera& camera, LLVector3& min, LLVector3& max, LLVector3* smin, LLVector3* smax)
 {
     const F32 X = 65536.f;
 
     min = LLVector3(X,X,X);
     max = LLVector3(-X,-X,-X);
+    if (smin && smax)
+    {
+        *smin = min;
+        *smax = max;
+    }
 
     LLViewerCamera::eCameraID saved_camera_id = LLViewerCamera::sCurCameraID;
     LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
@@ -3133,9 +3138,24 @@ bool LLPipeline::getVisibleExtents(LLCamera& camera, LLVector3& min, LLVector3& 
             {
                 if (hasRenderType(part->mDrawableType))
                 {
-                    if (!part->getVisibleExtents(camera, min, max))
+                    // <SS:ShadowCache> one walk, two boxes: the partition's own extents
+                    // merge into the full box, and into the static box unless it holds movers.
+                    LLVector3 pmin(X, X, X);
+                    LLVector3 pmax(-X, -X, -X);
+                    if (!part->getVisibleExtents(camera, pmin, pmax))
                     {
                         res = false;
+                    }
+                    if (pmin.mV[0] <= pmax.mV[0])
+                    {
+                        update_min_max(min, max, pmin);
+                        update_min_max(min, max, pmax);
+                        const bool mover = (i == LLViewerRegion::PARTITION_BRIDGE || i == LLViewerRegion::PARTITION_AVATAR || i == LLViewerRegion::PARTITION_CONTROL_AV);
+                        if (smin && smax && !mover)
+                        {
+                            update_min_max(*smin, *smax, pmin);
+                            update_min_max(*smin, *smax, pmax);
+                        }
                     }
                 }
             }
@@ -13544,16 +13564,10 @@ void LLPipeline::renderShadow(const LLMatrix4a& view, const LLMatrix4a& proj, LL
     LLPipeline::sShadowRender = false;
 }
 
-bool LLPipeline::getVisiblePointCloud(LLCamera& camera, LLVector3& min, LLVector3& max, std::vector<LLVector3>& fp, LLVector3 light_dir)
+// The points of the frustum slice that lie inside the box, plus the box corners inside the
+// slice: what a shadow projection has to cover.
+static void cloudFromBox(LLCamera& camera, const LLVector3& min, const LLVector3& max, std::vector<LLVector3>& fp)
 {
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
-    //get point cloud of intersection of frust and min, max
-
-    if (getVisibleExtents(camera, min, max))
-    {
-        return false;
-    }
-
     //get set of planes on bounding box
     LLPlane bp[] = {
         LLPlane(min, LLVector3(-1,0,0)),
@@ -13705,6 +13719,32 @@ bool LLPipeline::getVisiblePointCloud(LLCamera& camera, LLVector3& min, LLVector
         if (found)
         {
             fp.push_back(pp[i]);
+        }
+    }
+
+}
+
+bool LLPipeline::getVisiblePointCloud(LLCamera& camera, LLVector3& min, LLVector3& max, std::vector<LLVector3>& fp, LLVector3 light_dir, std::vector<LLVector3>* fp_static)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
+    //get point cloud of intersection of frust and min, max
+
+    LLVector3 smin, smax;
+    if (getVisibleExtents(camera, min, max, fp_static ? &smin : nullptr, fp_static ? &smax : nullptr))
+    {
+        return false;
+    }
+
+    cloudFromBox(camera, min, max, fp);
+
+    // <SS:ShadowCache> the same slice against the static-only box, for a cache box that a
+    // passing avatar or vehicle cannot drag around
+    if (fp_static)
+    {
+        fp_static->clear();
+        if (smin.mV[0] <= smax.mV[0])
+        {
+            cloudFromBox(camera, smin, smax, *fp_static);
         }
     }
 
@@ -13879,8 +13919,8 @@ S32 LLPipeline::pickShadowCacheSoftSlot(const LLVector3& lightDir) const
 // then blit it into the cascade and draw the movers over it. Returns false when this cascade
 // cannot be cached this frame (no target, or the frame's hard-refresh budget is spent) and
 // the caller draws it the old way.
-bool LLPipeline::renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp, const LLVector3& lightDir,
-                                        const LLPlane& shadow_near_clip, const LLCamera& camera,
+bool LLPipeline::renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp, const std::vector<LLVector3>& fp_static,
+                                        const LLVector3& lightDir, const LLPlane& shadow_near_clip, const LLCamera& camera,
                                         const LLMatrix4a& inv_view, bool soft_slot, S32& hard_budget)
 {
     static LLCachedControl<F32> shadow_cache_pad(gSavedSettings, "RenderShadowCachePad", 0.25f);
@@ -13899,13 +13939,16 @@ bool LLPipeline::renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp,
     const LLMatrix4a cview = LLMatrix4a::lookDir(LLVector4a(0.f, 0.f, 0.f, 1.f),
                                                  LLVector4a(lightDir.mV[0], lightDir.mV[1], lightDir.mV[2]),
                                                  LLVector4a(cup.mV[0], cup.mV[1], cup.mV[2]));
-    // The slice's box in a given light basis.
-    auto slice_box = [&fp](const LLMatrix4a& view, LLVector3& bmin, LLVector3& bmax)
+    // The slice's box in a given light basis. Its width and height come from the static
+    // extents when there are any, so a mover at the edge of the view cannot drag the box and
+    // force a refresh every second; its depth range comes from everything, so movers keep
+    // receiving each other's shadows on open ground where nothing static stands as tall.
+    auto cloud_box = [](const std::vector<LLVector3>& pts, const LLMatrix4a& view, LLVector3& bmin, LLVector3& bmax)
     {
-        for (U32 i = 0; i < fp.size(); ++i)
+        for (U32 i = 0; i < pts.size(); ++i)
         {
             LLVector4a p;
-            view.affineTransform(LLVector4a(fp[i].mV[0], fp[i].mV[1], fp[i].mV[2], 1.f), p);
+            view.affineTransform(LLVector4a(pts[i].mV[0], pts[i].mV[1], pts[i].mV[2], 1.f), p);
             const LLVector3 v(p.getF32ptr());
             if (i == 0)
             {
@@ -13915,6 +13958,17 @@ bool LLPipeline::renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp,
             {
                 update_min_max(bmin, bmax, v);
             }
+        }
+    };
+    auto slice_box = [&](const LLMatrix4a& view, LLVector3& bmin, LLVector3& bmax)
+    {
+        cloud_box(fp, view, bmin, bmax);
+        if (!fp_static.empty())
+        {
+            LLVector3 smin, smax;
+            cloud_box(fp_static, view, smin, smax);
+            bmin.mV[0] = smin.mV[0]; bmax.mV[0] = smax.mV[0];
+            bmin.mV[1] = smin.mV[1]; bmax.mV[1] = smax.mV[1];
         }
     };
     LLVector3 bmin, bmax;
@@ -14455,8 +14509,10 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
             static std::vector<LLVector3> fp;
             fp.clear();
+            static std::vector<LLVector3> fp_static; // <SS:ShadowCache>
+            fp_static.clear();
 
-            if (!gPipeline.getVisiblePointCloud(shadow_cam, min, max, fp, lightDir)
+            if (!gPipeline.getVisiblePointCloud(shadow_cam, min, max, fp, lightDir, use_cache ? &fp_static : nullptr)
                 || j > RenderShadowSplits)
             {
                 //no possible shadow receivers
@@ -14488,7 +14544,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             }
 
             // <SS:ShadowCache>
-            if (use_cache && renderCachedSunCascade(j, fp, lightDir, shadow_near_clip, camera, inv_view, soft_slot == j, hard_budget))
+            if (use_cache && renderCachedSunCascade(j, fp, fp_static, lightDir, shadow_near_clip, camera, inv_view, soft_slot == j, hard_budget))
             {
                 continue;
             }

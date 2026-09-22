@@ -346,8 +346,11 @@ public:
     void updateMovedList(LLDrawable::drawable_vector_t& move_list);
     void updateMove();
     bool visibleObjectsInFrustum(LLCamera& camera);
-    bool getVisibleExtents(LLCamera& camera, LLVector3 &min, LLVector3& max);
-    bool getVisiblePointCloud(LLCamera& camera, LLVector3 &min, LLVector3& max, std::vector<LLVector3>& fp, LLVector3 light_dir = LLVector3(0,0,0));
+    // smin/smax, when given, receive the same extents without the mover partitions (bridges,
+    // avatars, animesh); smin.x > smax.x when nothing static is visible. <SS:ShadowCache>
+    bool getVisibleExtents(LLCamera& camera, LLVector3 &min, LLVector3& max, LLVector3* smin = nullptr, LLVector3* smax = nullptr);
+    // fp_static, when given, is the same cloud built from the static-only extents. <SS:ShadowCache>
+    bool getVisiblePointCloud(LLCamera& camera, LLVector3 &min, LLVector3& max, std::vector<LLVector3>& fp, LLVector3 light_dir = LLVector3(0,0,0), std::vector<LLVector3>* fp_static = nullptr);
 
     // Populate given LLCullResult with results of a frustum cull of the entire scene against the given LLCamera
     // <SS:ShadowCache> which partitions a shadow cull walks: everything, the static octree
@@ -471,7 +474,7 @@ public:
     void shadowCacheNoteStaticChange(const LLVector4a& center, const LLVector4a& half);
     void releaseShadowCache();
     S32  pickShadowCacheSoftSlot(const LLVector3& lightDir) const;
-    bool renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp, const LLVector3& lightDir, const LLPlane& shadow_near_clip, const LLCamera& camera, const LLMatrix4a& inv_view, bool soft_slot, S32& hard_budget);
+    bool renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp, const std::vector<LLVector3>& fp_static, const LLVector3& lightDir, const LLPlane& shadow_near_clip, const LLCamera& camera, const LLMatrix4a& inv_view, bool soft_slot, S32& hard_budget);
     void renderSelectedFaces(const LLColor4& color);
     void renderHighlights();
     bool renderVignette(LLRenderTarget* src, LLRenderTarget* dst);
