@@ -13230,7 +13230,8 @@ void LLPipeline::bindReflectionProbes(LLGLSLShader& shader)
 
     // reflection probe shaders generally sample the scene map as well for SSR
     channel = shader.enableTexture(LLShaderMgr::SCENE_MAP);
-    if (channel > -1)
+    // <SS:Nexii> the map only exists while SSR is on; our precipitation shader asks for it regardless
+    if (channel > -1 && mSceneMap.isComplete())
     {
         gGL.getTextureSlot(channel)->bind(&mSceneMap);
     }

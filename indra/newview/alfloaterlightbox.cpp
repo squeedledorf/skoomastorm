@@ -52,6 +52,7 @@
 #include "alwhitebalancesolver.h"
 #include "llagent.h"
 #include "llenvironment.h"
+#include "ssatmoenvapplier.h" // <SS:Nexii> Atmo owns ENV_LOCAL while it runs
 #include "llfile.h"
 #include "fsyspath.h"
 #include "llnotificationsutil.h"
@@ -1423,6 +1424,13 @@ std::shared_ptr<LLSettingsDay> ALFloaterLightBox::getScrubbableDay() const
 
 bool ALFloaterLightBox::isSkyFrozen() const
 {
+    // <SS:Nexii> Atmo Magic installs its own fixed sky into ENV_LOCAL every frame while it runs,
+    // which is not a freeze and cannot be undone here: a freeze of ours would be covered up on
+    // the next frame. Treat the sky as live and let the row say who owns it.
+    if (SSAtmoEnvApplier::instance().isActive() && !mDayFreezeIsOurs)
+    {
+        return false;
+    }
     return (bool)LLEnvironment::instance().getEnvironmentFixedSky(LLEnvironment::ENV_LOCAL);
 }
 
@@ -1554,7 +1562,8 @@ void ALFloaterLightBox::refreshDayCycleRow()
         return; // the XUI is free to drop the row
     }
 
-    const bool can_change = RlvActions::canChangeEnvironment();
+    const bool atmo_owns_sky = SSAtmoEnvApplier::instance().isActive(); // <SS:Nexii> see isSkyFrozen
+    const bool can_change = RlvActions::canChangeEnvironment() && !atmo_owns_sky;
     const bool frozen = isSkyFrozen();
     const bool has_day = (bool)getScrubbableDay();
 
