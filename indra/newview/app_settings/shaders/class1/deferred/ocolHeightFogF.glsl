@@ -92,6 +92,7 @@ uniform float ssFogGroundZ;
 uniform float ssFogWaterZ;
 uniform vec3 ssFogWind;
 uniform float ssFogTime;
+uniform float ssFogDebug;
 
 // This mode's own: the step count, whether to sample the sun shadow maps along the ray, and
 // the two bank-noise drift offsets (Atmo's wind times time, wrapped to the noise tile CPU-side).
