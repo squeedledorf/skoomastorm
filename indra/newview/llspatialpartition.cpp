@@ -331,8 +331,12 @@ void LLSpatialGroup::rebuildGeom()
 {
     if (!isDead())
     {
+        const bool was_dirty = hasState(LLSpatialGroup::GEOM_DIRTY); // <SS:ShadowCache>
         getSpatialPartition()->rebuildGeom(this);
-        noteStaticShadowChange(); // <SS:ShadowCache> the bounds after the rebuild, whichever partition did it
+        if (was_dirty)
+        {
+            noteStaticShadowChange(); // <SS:ShadowCache> the bounds after a real rebuild, whichever partition did it
+        }
 
         if (hasState(LLSpatialGroup::MESH_DIRTY))
         {
@@ -531,25 +535,17 @@ void LLSpatialGroup::setState(U32 state, S32 mode)
         mState |= state;
     }
 
-    if (state & GEOM_DIRTY)
-    {
-        noteStaticShadowChange(); // <SS:ShadowCache>
-    }
 }
 
 // <SS:ShadowCache> A static group about to change, or just rebuilt: its bounds are what a
-// cached sun cascade has drawn and must redraw. Movers (bridges, avatars, animesh) draw
-// every frame and are not the cache's business; nor is the HUD.
+// cached sun cascade has drawn and must redraw. Only the partitions the cache holds count;
+// movers draw every frame and particles never cast. A group still being constructed has no
+// bounds (and, for a partition's root, no partition type yet) and says nothing.
 void LLSpatialGroup::noteStaticShadowChange()
 {
     LLSpatialPartition* part = getSpatialPartition();
-    if (!part || part->isBridge())
-    {
-        return;
-    }
-    const U32 type = part->mPartitionType;
-    if (type == LLViewerRegion::PARTITION_BRIDGE || type == LLViewerRegion::PARTITION_AVATAR ||
-        type == LLViewerRegion::PARTITION_CONTROL_AV || type == LLViewerRegion::PARTITION_HUD)
+    if (!part || part->isBridge() || !LLPipeline::isStaticShadowPartition(part->mPartitionType) ||
+        mObjectBounds[1].equals3(LLVector4a::getZero()))
     {
         return;
     }

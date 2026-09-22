@@ -335,7 +335,6 @@ bool    LLPipeline::sBakeSunlight = false;
 bool    LLPipeline::sNoAlpha = false;
 bool    LLPipeline::sUseFarClip = true;
 bool    LLPipeline::sShadowRender = false;
-LLPipeline::EShadowCullFilter LLPipeline::sShadowCullFilter = LLPipeline::SHADOW_CULL_ALL; // <SS:ShadowCache>
 bool    LLPipeline::sRenderGlow = false;
 bool    LLPipeline::sImpostorRender = false;
 bool    LLPipeline::sShowJellyDollAsImpostor = true;
@@ -3206,7 +3205,7 @@ void LLPipeline::updateReverseZ()
     }
 }
 
-void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_attachments)
+void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_attachments, EShadowCullFilter filter)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE; //LL_RECORD_BLOCK_TIME(FTM_CULL);
     LL_PROFILE_GPU_ZONE("updateCull"); // should always be zero GPU time, but drop a timer to flush stuff out
@@ -3253,10 +3252,11 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
         {
             LLSpatialPartition* part = region->getSpatialPartition(i);
-            // <SS:ShadowCache> the cached static pass skips the movers, the per-frame
-            // dynamic pass walks only them.
+            // <SS:ShadowCache> the cached static pass walks only the partitions it caches,
+            // the per-frame dynamic pass only the movers.
             const bool mover_part = (i == LLViewerRegion::PARTITION_BRIDGE || i == LLViewerRegion::PARTITION_AVATAR || i == LLViewerRegion::PARTITION_CONTROL_AV);
-            if (part && (sShadowCullFilter == SHADOW_CULL_STATIC ? !mover_part : sShadowCullFilter == SHADOW_CULL_DYNAMIC ? mover_part : true))
+            const bool walk = (filter == SHADOW_CULL_ALL) || (filter == SHADOW_CULL_DYNAMIC ? mover_part : isStaticShadowPartition(i));
+            if (part && walk)
             {
                 if (!hud_attachments ? LLViewerRegion::PARTITION_BRIDGE == i || hasRenderType(part->mDrawableType) : hasRenderType(part->mDrawableType))
                 {
@@ -3267,7 +3267,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
 
         //scan the VO Cache tree
         LLVOCachePartition* vo_part = region->getVOCachePartition();
-        if(vo_part && sShadowCullFilter != SHADOW_CULL_DYNAMIC) // <SS:ShadowCache>
+        if(vo_part)
         {
             // <FS:Beq> Fix area search again
             //vo_part->cull(camera, sUseOcclusion > 0);
@@ -13334,9 +13334,7 @@ void LLPipeline::renderShadow(const LLMatrix4a& view, const LLMatrix4a& proj, LL
     // so skip the per-cascade octree walk and only sort/build this cascade's render map.
     if (do_cull)
     {
-        sShadowCullFilter = filter; // <SS:ShadowCache>
-        updateCull(shadow_cam, result);
-        sShadowCullFilter = SHADOW_CULL_ALL;
+        updateCull(shadow_cam, result, false, filter); // <SS:ShadowCache>
     }
 
     stateSort(shadow_cam, result);
@@ -13402,25 +13400,9 @@ void LLPipeline::renderShadow(const LLMatrix4a& view, const LLMatrix4a& proj, LL
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("shadow geom");
-        // <SS:ShadowCache> the pools split the way the cull did: avatars are movers,
-        // terrain and trees are static.
-        if (filter != SHADOW_CULL_ALL)
-        {
-            pushRenderTypeMask();
-            if (filter == SHADOW_CULL_STATIC)
-            {
-                clearRenderTypeMask(RENDER_TYPE_AVATAR, RENDER_TYPE_CONTROL_AV, END_RENDER_TYPES);
-            }
-            else
-            {
-                andRenderTypeMask(RENDER_TYPE_AVATAR, RENDER_TYPE_CONTROL_AV, END_RENDER_TYPES);
-            }
-        }
+        // The pools draw only the faces this pass's cull put in them, so the static and
+        // mover splits need no mask of their own here.
         renderGeomShadow(shadow_cam);
-        if (filter != SHADOW_CULL_ALL)
-        {
-            popRenderTypeMask();
-        }
     }
 
     {
@@ -13833,52 +13815,80 @@ static void bucketShadowCull(LLCullResult& src, LLCamera& cam, LLCullResult& dst
 }
 
 // <SS:ShadowCache>
-static LLRenderTarget::eDepthFormat shadowDepthFormat()
+// static
+bool LLPipeline::isStaticShadowPartition(U32 partition_type)
 {
-    static LLCachedControl<bool> shadow_depth_32f(gSavedSettings, "AlchemyRenderShadowDepth32F", false);
-    return (shadow_depth_32f || LLRender::sReverseZ) ? LLRenderTarget::DEPTH_FMT_32F : LLRenderTarget::DEPTH_FMT_24;
+    return partition_type == LLViewerRegion::PARTITION_TERRAIN || partition_type == LLViewerRegion::PARTITION_TREE ||
+           partition_type == LLViewerRegion::PARTITION_GRASS   || partition_type == LLViewerRegion::PARTITION_VOLUME;
 }
 
 void LLPipeline::shadowCacheNoteStaticChange(const LLVector4a& center, const LLVector4a& half)
 {
-    if (mShadowCacheNotesOverflow)
+    for (ShadowCascadeCache& cache : mShadowCache)
     {
-        return;
+        if (cache.mValid && !cache.mDirty && cache.mCamera.AABBInFrustum(center, half) > 0)
+        {
+            cache.mDirty = true;
+        }
     }
-    if (mShadowCacheNotes.size() >= 512)
-    {   // a mass rebuild: cheaper to refresh everything than to test it all
-        mShadowCacheNotesOverflow = true;
-        mShadowCacheNotes.clear();
-        return;
-    }
-    mShadowCacheNotes.emplace_back(center, half);
 }
 
 void LLPipeline::releaseShadowCache()
 {
-    for (U32 j = 0; j < 4; ++j)
+    for (ShadowCascadeCache& cache : mShadowCache)
     {
-        mShadowCache[j].mDepth.release();
-        mShadowCache[j].mValid = false;
+        cache.mDepth.release();
+        cache.mValid = false;
+        cache.mAllocFailed = false;
     }
 }
 
-// One sun cascade from the cache: refresh the static depth when the box no longer serves,
-// then blit it into the cascade and draw the movers over it. Returns false when the cache
-// target cannot be allocated, and the caller falls back to the uncached path.
-bool LLPipeline::renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp, const LLVector3& lightDir,
-                                        const LLPlane& shadow_near_clip, const LLCamera& camera,
-                                        const LLMatrix4a& inv_view, bool& soft_refreshed)
+// The one cascade this frame that may refresh for a reason that can wait (the sun crept,
+// it aged out, a static change landed in it): the one that has gone longest without.
+S32 LLPipeline::pickShadowCacheSoftSlot(const LLVector3& lightDir) const
 {
-    static LLCachedControl<F32> shadow_cache_pad(gSavedSettings, "RenderShadowCachePad", 0.25f);
     static LLCachedControl<F32> shadow_cache_age(gSavedSettings, "RenderShadowCacheMaxAge", 2.f);
     static LLCachedControl<F32> shadow_cache_sun(gSavedSettings, "RenderShadowCacheSunAngle", 0.05f);
     static LLCachedControl<S32> shadow_cache_interval(gSavedSettings, "RenderShadowCacheMinInterval", 6);
+    const F32 sun_cos = cosf(llclamp((F32)shadow_cache_sun, 0.05f, 10.f) * DEG_TO_RAD);
+    const F32 max_age = llmax((F32)shadow_cache_age, 0.1f);
+    const U32 interval = (U32)llmax((S32)shadow_cache_interval, 1);
+
+    S32 slot = -1;
+    U32 oldest = 0xFFFFFFFFu;
+    for (S32 c = 0; c < 4; ++c)
+    {
+        const ShadowCascadeCache& cache = mShadowCache[c];
+        if (!cache.mValid)
+        {
+            continue;
+        }
+        const bool sun_moved = cache.mLightDir * lightDir < sun_cos;
+        const bool aged = (gFrameTimeSeconds - cache.mTime) > max_age;
+        const bool dirty = cache.mDirty && (gFrameCount - cache.mFrame) >= interval;
+        if ((sun_moved || aged || dirty) && cache.mFrame < oldest)
+        {
+            oldest = cache.mFrame;
+            slot = c;
+        }
+    }
+    return slot;
+}
+
+// One sun cascade from the cache: refresh the static depth when the box no longer serves,
+// then blit it into the cascade and draw the movers over it. Returns false when this cascade
+// cannot be cached this frame (no target, or the frame's hard-refresh budget is spent) and
+// the caller draws it the old way.
+bool LLPipeline::renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp, const LLVector3& lightDir,
+                                        const LLPlane& shadow_near_clip, const LLCamera& camera,
+                                        const LLMatrix4a& inv_view, bool soft_slot, S32& hard_budget)
+{
+    static LLCachedControl<F32> shadow_cache_pad(gSavedSettings, "RenderShadowCachePad", 0.25f);
 
     ShadowCascadeCache& cache = mShadowCache[j];
     const U32 cw = mRT->shadow[j].getWidth();
     const U32 ch = mRT->shadow[j].getHeight();
-    if (cw == 0 || ch == 0 || fp.empty())
+    if (cache.mAllocFailed || cw == 0 || ch == 0 || fp.empty())
     {
         return false;
     }
@@ -13910,54 +13920,66 @@ bool LLPipeline::renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp,
     LLVector3 bmin, bmax;
     slice_box(cview, bmin, bmax);
 
-    if (bmax.mV[0] - bmin.mV[0] < 0.01f || bmax.mV[1] - bmin.mV[1] < 0.01f)
+    if (bmax.mV[0] - bmin.mV[0] < 0.01f || bmax.mV[1] - bmin.mV[1] < 0.01f || bmax.mV[2] - bmin.mV[2] < 0.01f)
     {   // a degenerate slice would snap to a zero texel
         return false;
     }
 
+    // Everything the static cull baked in besides the box: the region the agent coordinates
+    // hang off, which side of the water plane it kept, and the render-type mask.
     const LLVector3d region_origin = gAgent.getRegion() ? gAgent.getRegion()->getOriginGlobal() : LLVector3d::zero;
-    const F32 sun_cos = cosf(llclamp((F32)shadow_cache_sun, 0.f, 10.f) * DEG_TO_RAD);
-    bool fits = cache.mValid
-        && cache.mDepth.isComplete()
-        && cache.mDepth.getWidth() == cw && cache.mDepth.getHeight() == ch
-        && cache.mLightDir * lightDir >= sun_cos
-        && cache.mRegionOrigin == region_origin;
-    if (fits)
-    {   // the containment test in the basis the box was built in, not today's
-        LLVector3 tmin, tmax;
-        slice_box(cache.mView, tmin, tmax);
-        fits = tmin.mV[0] >= cache.mMin.mV[0] && tmin.mV[1] >= cache.mMin.mV[1] && tmin.mV[2] >= cache.mMin.mV[2]
-            && tmax.mV[0] <= cache.mMax.mV[0] && tmax.mV[1] <= cache.mMax.mV[1] && tmax.mV[2] <= cache.mMax.mV[2];
-    }
-    bool refresh = !fits;
-    if (fits && !soft_refreshed)
-    {   // the reasons that can wait: one cascade per frame takes them
-        const bool aged = (gFrameTimeSeconds - cache.mTime) > llmax((F32)shadow_cache_age, 0.1f);
-        const bool dirty = cache.mDirty && (gFrameCount - cache.mFrame) >= (U32)llmax((S32)shadow_cache_interval, 1);
-        if (aged || dirty)
-        {
-            refresh = true;
-            soft_refreshed = true;
-        }
+    const bool under_water = sUnderWaterRender;
+    U64 mask_hash = 1469598103934665603ULL;
+    for (U32 t = 0; t < NUM_RENDER_TYPES; ++t)
+    {
+        mask_hash = (mask_hash ^ (mRenderTypeEnabled[t] ? 1u : 0u)) * 1099511628211ULL;
     }
 
-    if (refresh)
+    // Hard reasons: the box no longer answers for this cascade at all.
+    bool hard = !cache.mValid
+        || !cache.mDepth.isComplete()
+        || cache.mDepth.getWidth() != cw || cache.mDepth.getHeight() != ch
+        || cache.mRegionOrigin != region_origin
+        || cache.mUnderWater != under_water
+        || cache.mMaskHash != mask_hash;
+    if (!hard)
+    {   // containment, in the basis the box was built in
+        LLVector3 tmin, tmax;
+        slice_box(cache.mView, tmin, tmax);
+        hard = !(tmin.mV[0] >= cache.mMin.mV[0] && tmin.mV[1] >= cache.mMin.mV[1] && tmin.mV[2] >= cache.mMin.mV[2]
+              && tmax.mV[0] <= cache.mMax.mV[0] && tmax.mV[1] <= cache.mMax.mV[1] && tmax.mV[2] <= cache.mMax.mV[2]);
+    }
+    if (hard)
+    {
+        if (hard_budget <= 0)
+        {   // this frame's hard refreshes are spent: the uncached path draws this one
+            return false;
+        }
+        --hard_budget;
+    }
+
+    if (hard || soft_slot)
     {
         if (!cache.mDepth.isComplete() || cache.mDepth.getWidth() != cw || cache.mDepth.getHeight() != ch)
         {
             cache.mDepth.release();
-            if (!cache.mDepth.allocate(cw, ch, 0, true, false, ALTextureSlot::TT_TEXTURE, LLRenderTarget::MIPS_NONE, shadowDepthFormat()))
+            if (!cache.mDepth.allocate(cw, ch, 0, true, false, ALTextureSlot::TT_TEXTURE, LLRenderTarget::MIPS_NONE, mRT->shadow[j].getDepthFormat()))
             {
-                LL_WARNS_ONCE("ShadowCache") << "Cascade " << j << " cache target failed to allocate; uncached" << LL_ENDL;
+                LL_WARNS("ShadowCache") << "Cascade " << j << " cache target failed to allocate; uncached until the maps reallocate" << LL_ENDL;
                 cache.mValid = false;
+                cache.mAllocFailed = true;
                 return false;
             }
         }
 
+        // Pad each axis by its own size, so the box grows by exactly the factor the map grew
+        // by and a texel keeps its size on both axes. The z pad follows the slice's own depth:
+        // the shader's constant bias is a fraction of the depth range, so padding z by the
+        // width would multiply it. Casters nearer the light than the box are depth-clamped.
+        const F32 padf = llclamp((F32)shadow_cache_pad, 0.02f, 1.f);
         const LLVector3 size = bmax - bmin;
-        const F32 pad = llclamp((F32)shadow_cache_pad, 0.02f, 1.f) * llmax(size.mV[0], size.mV[1]);
-        LLVector3 cmin = bmin - LLVector3(pad, pad, pad);
-        LLVector3 cmax = bmax + LLVector3(pad, pad, pad);
+        LLVector3 cmin = bmin - size * padf;
+        LLVector3 cmax = bmax + size * padf;
         // Snap the box to its own texel grid so a refresh lands on the same sampling lattice.
         // ponytail: the texel size still varies with the slice, so a refresh can shift edges
         // by a fraction of a texel; quantise the box size if that ever shows.
@@ -13974,6 +13996,8 @@ bool LLPipeline::renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp,
         cache.mMax = cmax;
         cache.mLightDir = lightDir;
         cache.mRegionOrigin = region_origin;
+        cache.mUnderWater = under_water;
+        cache.mMaskHash = mask_hash;
         cache.mCamera = camera;
         cache.mCamera.lookAt(camera.getOrigin(), camera.getOrigin() + lightDir, cup);
         cache.mCamera.setOrigin(0.f, 0.f, 0.f);
@@ -13983,7 +14007,6 @@ bool LLPipeline::renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp,
         cache.mCamera.setAgentPlane(LLCamera::AGENT_PLANE_NEAR, shadow_near_clip);
         cache.mFrame = gFrameCount;
         cache.mTime = gFrameTimeSeconds;
-        cache.mDirty = false;
         cache.mValid = true;
         ++mShadowCacheRefreshes[j];
 
@@ -13993,38 +14016,11 @@ bool LLPipeline::renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp,
         cache.mDepth.getViewport(gGLViewport);
         cache.mDepth.clear();
         static LLCullResult static_result[4];
-        const size_t notes_before = mShadowCacheNotes.size();
-        const bool overflow_before = mShadowCacheNotesOverflow;
         renderShadow(cache.mView, cache.mProj, ccam, static_result[j], true, true, SHADOW_CULL_STATIC);
         cache.mDepth.flush();
-
-        // Groups the refresh rebuilt on its way through are in this cascade's depth already;
-        // the other cascades still have to hear about them, now, so they are not lost.
-        if (mShadowCacheNotesOverflow && !overflow_before)
-        {
-            for (U32 c = 0; c < 4; ++c)
-            {
-                if (c != (U32)j) mShadowCache[c].mDirty = true;
-            }
-            mShadowCacheNotesOverflow = false;
-        }
-        else if (mShadowCacheNotes.size() > notes_before)
-        {
-            for (U32 c = 0; c < 4; ++c)
-            {
-                ShadowCascadeCache& other = mShadowCache[c];
-                if (c == (U32)j || !other.mValid || other.mDirty) continue;
-                for (size_t n = notes_before; n < mShadowCacheNotes.size(); ++n)
-                {
-                    if (other.mCamera.AABBInFrustum(mShadowCacheNotes[n].first, mShadowCacheNotes[n].second) > 0)
-                    {
-                        other.mDirty = true;
-                        break;
-                    }
-                }
-            }
-            mShadowCacheNotes.resize(notes_before);
-        }
+        // Groups the refresh rebuilt on its way through flagged this cascade too; they are in
+        // the depth it just drew. The other cascades keep their flags.
+        cache.mDirty = false;
     }
 
     LLCamera ccam = cache.mCamera;
@@ -14301,9 +14297,13 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         // its own slice -- GPU-neutral vs. per-cascade culling, so it helps CPU-bound
         // targets without regressing GPU-bound ones. Disabled in cube snapshots. Default 0.
         static LLCachedControl<S32> sShadowCullMode(gSavedSettings, "RenderShadowCullMode", 0);
+        // <SS:ShadowCache> the cached cascades cull for themselves, so the union walk would
+        // only be a fifth one.
+        static LLCachedControl<bool> shadow_cache(gSavedSettings, "RenderShadowCache", true);
+        const bool use_cache = shadow_cache && !gCubeSnapshot && !sImpostorRender && mRT == &mMainRT;
         bool have_union_cull = false;
         static LLCullResult sUnionShadowResult;
-        if (sShadowCullMode() == 1 && !gCubeSnapshot)
+        if (sShadowCullMode() == 1 && !gCubeSnapshot && !use_cache)
         {
             LLCamera ucam = camera;
             ucam.setFar(16.f);
@@ -14389,44 +14389,16 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             }
         }
 
-        // <SS:ShadowCache> settle which cached cascades the frame's static changes touched
-        static LLCachedControl<bool> shadow_cache(gSavedSettings, "RenderShadowCache", true);
-        const bool use_cache = shadow_cache && !gCubeSnapshot && !sImpostorRender && mRT == &mMainRT;
-        bool soft_refreshed = false;
-        if (use_cache)
-        {
-            for (U32 c = 0; c < 4; ++c)
-            {
-                ShadowCascadeCache& cache = mShadowCache[c];
-                if (!cache.mValid || cache.mDirty)
-                {
-                    continue;
-                }
-                if (mShadowCacheNotesOverflow)
-                {
-                    cache.mDirty = true;
-                    continue;
-                }
-                for (const auto& note : mShadowCacheNotes)
-                {
-                    if (cache.mCamera.AABBInFrustum(note.first, note.second) > 0)
-                    {
-                        cache.mDirty = true;
-                        break;
-                    }
-                }
-            }
-        }
-        if (use_cache)
-        {   // consumed; a probe or impostor pass leaves them for the next main frame
-            mShadowCacheNotes.clear();
-            mShadowCacheNotesOverflow = false;
-        }
+        // <SS:ShadowCache> one cascade may take a refresh that can wait; hard refreshes (the
+        // slice left its box, or the cull's inputs changed) get a budget, and past it a
+        // cascade draws uncached for the frame instead of stacking four static passes.
+        const S32 soft_slot = use_cache ? pickShadowCacheSoftSlot(lightDir) : -1;
+        S32 hard_budget = 2;
         if (use_cache && (gFrameCount % 600) == 0)
         {
-            LL_INFOS("ShadowCache") << "Cascade refreshes over the last 600 frames: "
-                                    << mShadowCacheRefreshes[0] << " " << mShadowCacheRefreshes[1] << " "
-                                    << mShadowCacheRefreshes[2] << " " << mShadowCacheRefreshes[3] << LL_ENDL;
+            LL_DEBUGS("ShadowCache") << "Cascade refreshes over the last 600 frames: "
+                                     << mShadowCacheRefreshes[0] << " " << mShadowCacheRefreshes[1] << " "
+                                     << mShadowCacheRefreshes[2] << " " << mShadowCacheRefreshes[3] << LL_ENDL;
             mShadowCacheRefreshes[0] = mShadowCacheRefreshes[1] = mShadowCacheRefreshes[2] = mShadowCacheRefreshes[3] = 0;
         }
         // </SS:ShadowCache>
@@ -14515,7 +14487,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             }
 
             // <SS:ShadowCache>
-            if (use_cache && renderCachedSunCascade(j, fp, lightDir, shadow_near_clip, camera, inv_view, soft_refreshed))
+            if (use_cache && renderCachedSunCascade(j, fp, lightDir, shadow_near_clip, camera, inv_view, soft_slot == j, hard_budget))
             {
                 continue;
             }
@@ -14973,13 +14945,15 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
     }
     else
     {
+        // mShadowModelview/mShadowProjection: both the fitted and the cached path set those,
+        // the local view[]/proj[] only the fitted one.
         LLCamera offset_cam = camera;
-        offset_cam.setModelview(view[1]);
-        offset_cam.setProjection(proj[1]);
+        offset_cam.setModelview(mShadowModelview[1]);
+        offset_cam.setProjection(mShadowProjection[1]);
         LLViewerCamera::setCurrent(offset_cam);
-        gGL.loadMatrix(view[1]);
+        gGL.loadMatrix(mShadowModelview[1]);
         gGL.matrixMode(LLRender::MM_PROJECTION);
-        gGL.loadMatrix(proj[1]);
+        gGL.loadMatrix(mShadowProjection[1]);
         gGL.matrixMode(LLRender::MM_MODELVIEW);
     }
     gGL.setColorMask(true, true);

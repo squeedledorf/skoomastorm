@@ -839,6 +839,16 @@ void LLVOVolume::animateTextures()
                     }
                 }
 
+                // <SS:ShadowCache> a scrolling or spinning cutout on a static caster changes
+                // its shadow every frame with no group state change; tell the cache.
+                if (mDrawable->isStatic() && facep->getTexture() &&
+                    (facep->getTexture()->getComponents() == 4 || te->getAlpha() < 1.f))
+                {
+                    if (LLSpatialGroup* sgroup = mDrawable->getSpatialGroup())
+                    {
+                        sgroup->noteStaticShadowChange();
+                    }
+                }
                 LLMatrix4& tex_mat = *facep->mTextureMatrix;
                 tex_mat.setIdentity();
                 LLVector3 trans ;

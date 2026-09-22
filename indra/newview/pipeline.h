@@ -350,7 +350,10 @@ public:
     bool getVisiblePointCloud(LLCamera& camera, LLVector3 &min, LLVector3& max, std::vector<LLVector3>& fp, LLVector3 light_dir = LLVector3(0,0,0));
 
     // Populate given LLCullResult with results of a frustum cull of the entire scene against the given LLCamera
-    void updateCull(LLCamera& camera, LLCullResult& result, bool hud_attachments = false);
+    // <SS:ShadowCache> which partitions a shadow cull walks: everything, the static octree
+    // only (no bridges, no avatars), or only the movers (bridges and avatars).
+    enum EShadowCullFilter { SHADOW_CULL_ALL = 0, SHADOW_CULL_STATIC, SHADOW_CULL_DYNAMIC };
+    void updateCull(LLCamera& camera, LLCullResult& result, bool hud_attachments = false, EShadowCullFilter filter = SHADOW_CULL_ALL);
     void createObjects(F32 max_dtime);
     void createObject(LLViewerObject* vobj);
     void processPartitionQ();
@@ -458,16 +461,17 @@ public:
 
     // SKOOMA-PORT: our depth_func parameter (default GL_LESS, never passed by any caller) dropped for
     // Alchemy's signature; Alchemy picks the shadow depth func itself for reverse-Z.
-    // <SS:ShadowCache> which partitions a shadow cull walks: everything, the static octree
-    // only (no bridges, no avatars), or only the movers (bridges and avatars).
-    enum EShadowCullFilter { SHADOW_CULL_ALL = 0, SHADOW_CULL_STATIC, SHADOW_CULL_DYNAMIC };
-    static EShadowCullFilter sShadowCullFilter;
+    // The partitions whose casters the static cache holds; everything else is a mover, casts
+    // nothing, or is never walked by the shadow cull.
+    static bool isStaticShadowPartition(U32 partition_type);
     void renderShadow(const LLMatrix4a& view, const LLMatrix4a& proj, LLCamera& camera, LLCullResult& result, bool depth_clamp, bool do_cull = true, EShadowCullFilter filter = SHADOW_CULL_ALL);
-    // A static spatial group changed (rebuilt, emptied, took or lost an object): any cached
-    // cascade whose box holds these bounds re-renders. Called from llspatialpartition.
+    // A static spatial group changed (rebuilt, emptied, took or lost an object, or a face's
+    // texture animated): every cached cascade whose box holds these bounds is marked to
+    // re-render. Called from llspatialpartition and llvovolume.
     void shadowCacheNoteStaticChange(const LLVector4a& center, const LLVector4a& half);
     void releaseShadowCache();
-    bool renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp, const LLVector3& lightDir, const LLPlane& shadow_near_clip, const LLCamera& camera, const LLMatrix4a& inv_view, bool& soft_refreshed);
+    S32  pickShadowCacheSoftSlot(const LLVector3& lightDir) const;
+    bool renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp, const LLVector3& lightDir, const LLPlane& shadow_near_clip, const LLCamera& camera, const LLMatrix4a& inv_view, bool soft_slot, S32& hard_budget);
     void renderSelectedFaces(const LLColor4& color);
     void renderHighlights();
     bool renderVignette(LLRenderTarget* src, LLRenderTarget* dst);
@@ -1053,14 +1057,15 @@ public:
         LLVector3       mMax;
         LLVector3       mLightDir;
         LLVector3d      mRegionOrigin;   // agent space moves with the region; a change voids the box
+        U64             mMaskHash = 0;   // render-type mask the static pass was culled with
         U32             mFrame = 0;
         F32             mTime = 0.f;
+        bool            mUnderWater = false; // which side of the water plane the cull kept
         bool            mValid = false;
-        bool            mDirty = false;
+        bool            mDirty = false;      // a static change landed inside the box
+        bool            mAllocFailed = false;
     };
     ShadowCascadeCache      mShadowCache[4];
-    std::vector<std::pair<LLVector4a, LLVector4a>> mShadowCacheNotes; // (center, half-size) of static groups changed this frame
-    bool                    mShadowCacheNotesOverflow = false;
     U32                     mShadowCacheRefreshes[4] = { 0, 0, 0, 0 };
     LLVector3               mShadowExtents[4][2];
     // TODO : separate Sun Shadow and Spot Shadow matrices

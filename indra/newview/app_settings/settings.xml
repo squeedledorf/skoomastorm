@@ -33983,7 +33983,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>RenderShadowCachePad</key>
   <map>
     <key>Comment</key>
-    <string>How far past its slice a cached cascade box reaches, as a fraction of the slice width on each side. Larger survives more camera motion before a refresh and costs map memory (the map grows to keep the texel size).</string>
+    <string>How far past its slice a cached cascade box reaches, as a fraction of the slice size on each side. Larger survives more camera motion before a refresh. The sun shadow maps grow by 1+2*pad per axis to keep the texel size, and each cascade keeps a cache of the same size, so sun shadow memory is about (1+2*pad)^2 * 2 times the uncached figure.</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
@@ -34005,7 +34005,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>RenderShadowCacheSunAngle</key>
   <map>
     <key>Comment</key>
-    <string>Degrees the sun may move before every cached cascade refreshes.</string>
+    <string>Degrees the sun may move before a cached cascade refreshes (one cascade per frame). Floor 0.05: below that float rounding would refresh every frame.</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
