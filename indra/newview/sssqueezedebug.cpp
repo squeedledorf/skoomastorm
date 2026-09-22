@@ -160,6 +160,20 @@ void ss_squeeze_self_test()
     }
     const U8* largest = blob.data() + (total_bytes - base_bytes);
 
+    // SKOOMA-PORT: storage is immutable and allocated for the whole pyramid, and LLImageGLMemory::alloc_tex_image accounts every level of it (its own loop, mirrored here), so the expectations are pyramid sizes rather than base-level ones.
+    auto pyramid_bytes = [](S32 format, S32 w, S32 h)
+    {
+        S64 bytes = LLImageGL::dataFormatVRAMBytes(format, w, h);
+        while (w > 1 && h > 1)
+        {
+            w >>= 1;
+            h >>= 1;
+            bytes += LLImageGL::dataFormatVRAMBytes(format, w, h);
+        }
+        return bytes;
+    };
+    const S64 bc7_expect = pyramid_bytes(GL_COMPRESSED_RGBA_BPTC_UNORM, SS_SQUEEZE_TEST_SIZE, SS_SQUEEZE_TEST_SIZE);
+
     // phase A - first upload, brand new texture name
     U64 before = LLImageGL::getTextureBytesAllocated();
     bool ok = image->createGLTexture(0, largest, true);
@@ -169,9 +183,9 @@ void ss_squeeze_self_test()
         << ", tex " << image->getTexName()
         << ", mips 0.." << max_discard
         << ", blob " << total_bytes << " bytes"
-        << ", accounted " << delta << " expected " << base_bytes
+        << ", accounted " << delta << " expected " << bc7_expect
         << ", gl error " << llformat("0x%04x", err)
-        << ((ok && delta == base_bytes && err == GL_NO_ERROR) ? " PASS" : " FAIL") << LL_ENDL;
+        << ((ok && delta == bc7_expect && err == GL_NO_ERROR) ? " PASS" : " FAIL") << LL_ENDL;
 
     // phase B - re-upload into the SAME texture name, the path that needs the explicit free before the explicit alloc
     before = LLImageGL::getTextureBytesAllocated();
@@ -187,7 +201,8 @@ void ss_squeeze_self_test()
     LLPointer<LLImageRaw> raw = new LLImageRaw((U16)SS_SQUEEZE_TEST_SIZE, (U16)SS_SQUEEZE_TEST_SIZE, 4);
     memset(raw->getData(), 0x80, (size_t)raw->getDataSize());
 
-    const S64 raw_expect = LLImageGL::dataFormatBytes(GL_RGBA8, SS_SQUEEZE_TEST_SIZE, SS_SQUEEZE_TEST_SIZE) - base_bytes;
+    // SKOOMA-PORT: the BPTC storage cannot be re-specified, so the uncompressed image gets a new name (sRGB RGBA8 pyramid); the BC7 name's accounting is released with it a few frames later by the deferred delete, so it does not show in this delta.
+    const S64 raw_expect = pyramid_bytes(GL_SRGB8_ALPHA8, SS_SQUEEZE_TEST_SIZE, SS_SQUEEZE_TEST_SIZE);
     before = LLImageGL::getTextureBytesAllocated();
     ok = image->createGLTexture(0, raw.get());
     err = ss_drain_gl_errors();

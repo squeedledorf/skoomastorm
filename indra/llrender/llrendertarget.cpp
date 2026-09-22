@@ -319,6 +319,17 @@ bool LLRenderTarget::addColorAttachment(U32 color_fmt)
         return true;
     }
 
+    // SKOOMA-PORT: colour storage is immutable (glTexStorage2D), which takes only sized formats; our
+    // render systems still ask for GL_RGBA/GL_RGB, which would fail to allocate.
+    switch (color_fmt)
+    {
+    case GL_RGBA: color_fmt = GL_RGBA8; break;
+    case GL_RGB:  color_fmt = GL_RGB8;  break;
+    case GL_RG:   color_fmt = GL_RG8;   break;
+    case GL_RED:  color_fmt = GL_R8;    break;
+    default: break;
+    }
+
     U32 offset = static_cast<U32>(mTex.size());
 
     if( offset >= 4 )

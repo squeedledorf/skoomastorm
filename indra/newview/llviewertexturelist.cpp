@@ -715,7 +715,7 @@ LLViewerFetchedTexture* LLViewerTextureList::createImage(const LLUUID &image_id,
     }
 
     // <SS:Nexii> Squeeze - STAGE 1 of the read path, and it has to happen HERE, after the boost level is set and before fast-cache enrolment. After, because half the exclusions are keyed on boost; before, because a fast cache hit is a 16x16 raw that goes straight to addToCreateTexture and would clobber a BC7 upload with a thumbnail. One map find under the store's map mutex, no file IO, microseconds - safe on the frame thread. See doc/super_compressed_textures.md.
-    // PORT-TODO(bc7): re-validate the probe against Alchemy's table insert (createImage now runs inside mImages.findOrInsert's factory) once canUseSqueeze() is live again.
+    // SKOOMA-PORT: runs inside mImages.findOrInsert's factory; safe because the probe touches only this texture and the store's own mutex, never the texture table.
     const bool bc7_known = (ssBC7ServeProbe(imagep) == SSBC7_SERVE_HIT);
     // </SS:Nexii>
 
@@ -1196,7 +1196,7 @@ F32 LLViewerTextureList::updateImagesCreateTextures(F32 max_time)
 
     // <SS:Nexii> Squeeze - STAGE 3 of the read path. Uploads finished BC7 prefix reads inside this frame's existing texture-creation budget rather than inventing a second one, and takes its slice first because a BC7 upload is half a dozen glCompressedTexImage2D calls with no decode behind it - the cheapest work in this function - and because landing it before the J2C create for the same texture is what stops the two from racing.
     // Nothing is subtracted from max_time: create_timer is already running and the loop below tests against it, so the time spent here is charged to this frame's budget exactly once. Subtracting as well would charge it twice.
-    // PORT-TODO(bc7): re-validate the upload pump against Alchemy's rewritten create-texture loop and its off-thread uploads once canUseSqueeze() is live.
+    // SKOOMA-PORT: uploads are main thread; a texture with a create queued here or on the LLImageGL thread is skipped (ssBC7CreateInFlight holds until postCreateTexture, which the main queue runs after syncTexName publishes the new name).
     ssBC7ServePumpUploads(max_time * 0.5f);
     // </SS:Nexii>
 

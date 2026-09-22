@@ -1438,7 +1438,7 @@ void LLViewerFetchedTexture::addToCreateTexture()
     // Keyed on the GL TEXTURE being compressed, not on the ladder: an exclusion that latched late takes the texture off the ladder while its BC7 texture is still on the card, and a ladder-keyed test would miss exactly those and hand them to the last-resort warn instead.
     //
     // Nothing is given up when the raw is no better than what is already there: the branch below drops that raw on the floor, and dropping the format first would trade a full-resolution BC7 texture for nothing at all.
-    // PORT-TODO(bc7): Alchemy's createTexture may upload off-thread (mUploadInFlight/mPublished); re-validate that dropping the BC7 format here cannot race an in-flight upload.
+    // SKOOMA-PORT: race-free against the LLImageGL thread: the format can only be compressed when no upload is in flight (BC7 uploads are main thread and the pump refuses while ssBC7CreateInFlight; every uncompressed upload drops the format in preCreateTexture before posting). Immutable storage: the BC7 name stays bound until the upload publishes a new one; createGLTexture sees the storage format change and never writes into it.
     if (mRawImage.notNull() && mGLTexturep.notNull()
         && mGLTexturep->getPrimaryFormat() != 0 && mGLTexturep->isCompressed()
         && (isForSculptOnly() || getDiscardLevel() < 0 || getDiscardLevel() > mRawDiscardLevel
@@ -1518,7 +1518,7 @@ bool LLViewerFetchedTexture::preCreateTexture(S32 usename/*= 0*/)
     }
 
     // <SS:Nexii> Squeeze - the same edge addToCreateTexture declares, and the point past which nothing else gets a say. createTexture() itself can run on the LLImageGL worker thread, so the format transition has to be settled here, on the main thread, before anything is posted. Keyed on the GL texture for the same reason as above.
-    // PORT-TODO(bc7): re-validate against Alchemy's off-thread createTexture; this must still run on the main thread before the upload is posted.
+    // SKOOMA-PORT: preCreateTexture runs on the main thread from scheduleCreateTexture, before the upload is posted to the LLImageGL thread, so the worker only ever sees the uncompressed format.
     if (mGLTexturep.notNull() && mGLTexturep->getPrimaryFormat() != 0 && mGLTexturep->isCompressed())
     {
         ssBC7LeaveResidency((U8)SSBC7_SERVE_UPGRADED, "preCreateTexture is about to upload an uncompressed image");
@@ -1683,6 +1683,8 @@ bool LLViewerFetchedTexture::ssBC7UploadFromStore(const U8* data_in, S32 serve_d
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
     if (mGLTexturep.isNull() || data_in == nullptr) return false;
+    // SKOOMA-PORT: an uncompressed create queued or on the LLImageGL thread owns the LLImageGL until postCreateTexture; the pump checks this too, but the invariant belongs here.
+    if (ssBC7CreateInFlight()) return false;
     if (mip_count <= 0 || mip_count > MAX_DISCARD_LEVEL + 1) return false;
     if (serve_discard < 0 || serve_discard >= mip_count) return false;
     if (src_components < 1 || src_components > 4) return false;
@@ -1723,7 +1725,7 @@ bool LLViewerFetchedTexture::ssBC7UploadFromStore(const U8* data_in, S32 serve_d
     // Internal and primary must be the SAME enum: alloc_tex_image sizes from mFormatPrimary while setManualImage sizes from mFormatInternal, and the compressed branch's VRAM accounting is only correct while the two agree.
     glimage->setExplicitFormat(GL_COMPRESSED_RGBA_BPTC_UNORM, GL_COMPRESSED_RGBA_BPTC_UNORM);
 
-    // PORT-TODO(bc7): Alchemy's createGLTexture calls beginUpload() and getters (getMaxDiscardLevel, getCurrentWidth, getComponents) may answer from mPublished while mUploadInFlight is set. Re-validate the setSize/getMaxDiscardLevel contract check above and the mirrored fields below against that, and confirm the glTexStorage2D allocation path accepts GL_COMPRESSED_RGBA_BPTC_UNORM with a partial (prefix) chain.
+    // SKOOMA-PORT: main thread with no upload in flight (checked at the top), so beginUpload never runs and every getter answers from the live members. glTexStorage2D takes BPTC as a sized format and allocates the full pyramid; GL_TEXTURE_MAX_LEVEL (mMaxDiscardLevel - serve_discard, set on the new name) keeps sampling inside the stored prefix. A re-serve at the same discard writes sub-images into the existing BPTC storage; any other discard gets a new name.
     if (!glimage->createGLTexture(serve_discard, data_in, true))
     {
         LL_WARNS("Squeeze") << "BC7 upload of " << mID << " failed inside createGLTexture at discard " << serve_discard << LL_ENDL;
@@ -1823,8 +1825,8 @@ void LLViewerFetchedTexture::ssBC7SetDeclined(U8 reason)
     // <SS:Nexii> Declining a texture that is ALREADY holding compressed levels strands it, and stranding it costs more than never having served it: scaleDown refuses because the texture is compressed but no longer RESIDENT, updateFetch will not re-request because the ladder has left the two states that ask, and the ordinary J2C fetch stays suppressed because a BC7 texture's discard is FINER than the one being asked for. The result is a full resolution texture the memory governor can never shrink and nothing will ever replace - reachable simply by an eviction pass dropping a record between the probe and the read.
     //
     // Handing the format back is what returns it to the stock path. From there the uncompressed pipeline owns it again and every mechanism that was refusing to act now applies normally.
-    // PORT-TODO(bc7): re-validate dropCompressedFormat + destroyTexture against Alchemy's upload thread (a pending off-thread upload may still hold the old name).
-    if (mGLTexturep.notNull() && mGLTexturep->isCompressed())
+    // SKOOMA-PORT: a compressed format means no upload is in flight (see addToCreateTexture), and destroyTexture refuses while mNeedsCreateTexture anyway.
+    if (mGLTexturep.notNull() && mGLTexturep->getPrimaryFormat() != 0 && mGLTexturep->isCompressed())
     {
         mGLTexturep->dropCompressedFormat("a BC7 re-serve failed, so the texture is handed back to the ordinary path rather than left stranded at full resolution");
         destroyTexture();
@@ -3534,7 +3536,7 @@ bool LLViewerLODTexture::scaleDown()
     // <SS:Nexii> Squeeze - LLImageGL::scaleDown refuses a block compressed texture outright, and processTextureStats calls this every pass while current discard is below desired, so a compressed texture left on mDownScaleQueue is re-queued forever, mCurrentDiscardLevel never moves and the memory governor never gets those bytes back - the exact opposite of what this feature is for, at precisely the moment it matters.
     //
     // Keyed on the GL texture actually being compressed rather than on the ladder, because the two can legitimately disagree: a resident that stepped back for a raw consumer is off the ladder while its GL texture is still BC7 until the replacement upload lands, and queueing THAT would spin just as hard. Down-rez for a texture still on the ladder is a re-upload of a SHORTER prefix, which the smallest-mip-first layout makes a short read rather than a full one.
-    // PORT-TODO(bc7): re-validate against Alchemy's scaleDown (it refuses isCompressed() textures too) and its down-scale queue.
+    // SKOOMA-PORT: still needed on Alchemy - LLImageGL::scaleDown refuses isCompressed() too, so a queued BC7 texture would be popped and re-queued every pass.
     if (mGLTexturep->getPrimaryFormat() != 0 && mGLTexturep->isCompressed())
     {
         if (ssBC7IsResident())

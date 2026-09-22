@@ -750,7 +750,13 @@ bool SSWindFlowMap::captureAlong(LLRenderTarget& target, S32 res, const Tile& ti
     if (target.getWidth() != (U32)res)
     {
         target.release();
-        if (!target.allocate(res, res, 0, true)) return false;
+        if (!target.allocate(res, res, 0, true))
+        {
+            set_current_modelview(saved_view);
+            set_current_projection(saved_proj);
+            LLViewerCamera::sCurCameraID = saved_camera;
+            return false;
+        }
     }
 
     target.bindTarget();

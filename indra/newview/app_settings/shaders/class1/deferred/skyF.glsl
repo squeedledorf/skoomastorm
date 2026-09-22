@@ -295,9 +295,9 @@ vec3 ss_optics(vec3 view)
         // than letting the 1e-5 floor blow the scale up into a full-sky wash.
         float ss_disc       = (ss_sun_radius > 1e-6) ? ss_sun_radius / 0.05 : 1.0;
         float cor_rho       = rho * ss_disc;
-        const float aureole = exp(-pow(cor_rho * 2.4, 2.0));
-        const float ringA   = exp(-pow((cor_rho - 2.4) / 1.0, 2.0));
-        const float ringB   = exp(-pow((cor_rho - 4.6) / 1.5, 2.0));
+        float aureole = exp(-pow(cor_rho * 2.4, 2.0));
+        float ringA   = exp(-pow((cor_rho - 2.4) / 1.0, 2.0));
+        float ringB   = exp(-pow((cor_rho - 4.6) / 1.5, 2.0));
 
         vec3 ccol = vec3(0.42, 0.44, 0.48) * aureole
                   + vec3(0.12, 0.07, 0.04) * ringA
@@ -649,7 +649,7 @@ void main()
         float  rel_pos_lightnorm = ss_lightnorm_dot;
         float optic_d = rel_pos_lightnorm;
         // <SS:Nexii> The horizon clip cuts the lower dome at eye level - and the sun with it
-        const bool ss_clipped_below = (ss_horizon_clip > 0.0) && (ss_below_horizon_y < 0.0);
+        bool ss_clipped_below = (ss_horizon_clip > 0.0) && (ss_below_horizon_y < 0.0);
         if (!ss_clipped_below)
         {
             // <SS:Nexii> The physical rainbow (ss_rainbow above) takes the stock strip's place while the SSAtmoRainbow gate is up; gate down keeps the stock single bow bit for bit.

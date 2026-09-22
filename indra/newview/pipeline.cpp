@@ -11356,6 +11356,7 @@ void LLPipeline::renderFinalize()
     // SSR, luminance and exposure stay above deliberately: reflections keep
     // their detail, and a blur conserves mean energy so metering is unaffected.
     static LLCachedControl<bool> RenderDepthOfFieldInEditMode(gSavedSettings, "RenderDepthOfFieldInEditMode", false);
+    sDoFEnabled = false; // <FS:Beq/> FIRE-32023: renderDoF sets it when it runs; the focus crosshair reads it
     if (RenderDepthOfField && (RenderDepthOfFieldInEditMode || !LLToolMgr::getInstance()->inBuildMode()) && !gCubeSnapshot)
     {
         renderDoF();
@@ -11445,7 +11446,9 @@ void LLPipeline::renderFinalize()
     {
         LLShaderEffectParams params(sourceBuffer, targetBuffer, false);
         LLVfxManager::instance().runEffect(EVisualEffect::RlvSphere, &params);
-        std::swap(sourceBuffer, targetBuffer);
+        // the params ping-pong once per sphere pass, so the result is wherever they ended up
+        sourceBuffer = params.m_pDstBuffer;
+        targetBuffer = params.m_pSrcBuffer;
     }
 // [/RLVa:KB]
 

@@ -156,6 +156,7 @@ void LLThread::registerThreadID() {}
 //
 void LLThread::threadRun()
 {
+    set_thread_fp_mode(); // SKOOMA-PORT: as Alchemy, workers flush denormals like the main thread
 #ifdef LL_WINDOWS
     set_thread_name(-1, mName.c_str());
 

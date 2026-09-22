@@ -78,6 +78,9 @@ S32 LLImageGL::calcMipLevelCount(S32 width, S32 height)
 
 U32 LLImageGL::sFrameCount = 0;
 
+// <SS:Nexii/> hoisted from above setNeedsAlphaAndPickMask so createGLTexture and dropCompressedFormat can test it
+const S8 INVALID_OFFSET = -99 ;
+
 
 // texture memory accounting (for macOS)
 static LLMutex sTexMemMutex;
@@ -370,6 +373,8 @@ static bool isSizedInternalFormat(S32 intformat)
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:
     case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:
+    case GL_COMPRESSED_RGBA_BPTC_UNORM:       // <SS:Nexii/> Squeeze BC7
+    case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM:
         return true;
     default:
         return false;
@@ -439,6 +444,10 @@ S32 LLImageGL::dataFormatBits(S32 dataformat)
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:    return 8;
     case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:          return 8;
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:    return 8;
+    // <SS:Nexii> BC7 is 16 bytes per 4x4 block, 8 bits per texel; the default below is a fatal LL_ERRS
+    case GL_COMPRESSED_RGBA_BPTC_UNORM:             return 8;
+    case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM:       return 8;
+    // </SS:Nexii>
     case GL_LUMINANCE:                              return 8;
     case GL_LUMINANCE8:                             return 8;
     case GL_ALPHA:                                  return 8;
@@ -492,6 +501,8 @@ S64 LLImageGL::dataFormatBytes(S32 dataformat, S32 width, S32 height)
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:
     case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:
+    case GL_COMPRESSED_RGBA_BPTC_UNORM:         // <SS:Nexii/> a 4x4 block format like S3TC
+    case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM:
         if (width < 4) width = 4;
         if (height < 4) height = 4;
         break;
@@ -532,6 +543,8 @@ S64 LLImageGL::dataFormatVRAMBytes(S32 dataformat, S32 width, S32 height)
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:
     case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:
+    case GL_COMPRESSED_RGBA_BPTC_UNORM:         // <SS:Nexii/> a 4x4 block format like S3TC
+    case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM:
         if (width < 4) width = 4;
         if (height < 4) height = 4;
         break;
@@ -554,6 +567,8 @@ S32 LLImageGL::dataFormatComponents(S32 dataformat)
       case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT: return 4;
       case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:    return 4;
       case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT: return 4;
+      case GL_COMPRESSED_RGBA_BPTC_UNORM:       return 4; // <SS:Nexii/>
+      case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM: return 4; // <SS:Nexii/>
       case GL_LUMINANCE:                        return 1;
       case GL_ALPHA:                            return 1;
       case GL_RED:                              return 1;
@@ -813,6 +828,11 @@ bool LLImageGL::setSize(S32 width, S32 height, S32 ncomponents, S32 discard_leve
             if(discard_level > 0)
             {
                 mMaxDiscardLevel = llmax(mMaxDiscardLevel, (S8)discard_level);
+                // <FS:minerjr> [FIRE-35361] RenderMaxTextureResolution caps texture resolution lower than intended
+                // 2K textures could set the mMaxDiscardLevel above MAX_DISCARD_LEVEL, which would
+                // cause them to not be down-scaled so they would get stuck at 0 discard all the time.
+                mMaxDiscardLevel = llmin(mMaxDiscardLevel, (S8)MAX_DISCARD_LEVEL);
+                // </FS:minerjr> [FIRE-35361]
             }
         }
         else
@@ -913,6 +933,59 @@ void LLImageGL::setExplicitFormat( LLGLint internal_format, LLGLenum primary_for
     resolveDeprecatedFormat();
 }
 
+// <SS:Nexii> Squeeze - the one place a component count becomes a GL format, shared by createGLTexture and dropCompressedFormat
+void LLImageGL::deriveFormatFromComponents()
+{
+    switch (mComponents)
+    {
+    case 1:
+        // Single-channel — used by font glyph maps, but the path
+        // is generic for any 1-component upload. setManualImage
+        // swizzles LUMINANCE → R8 with a gray-replicate mask on
+        // core profile.
+        mFormatInternal = GL_LUMINANCE8;
+        mFormatPrimary = GL_LUMINANCE;
+        mFormatType = GL_UNSIGNED_BYTE;
+        break;
+    case 2:
+        // Two-channel (luminance + alpha). Same swizzle remap
+        // happens in setManualImage on core profile.
+        mFormatInternal = GL_LUMINANCE8_ALPHA8;
+        mFormatPrimary = GL_LUMINANCE_ALPHA;
+        mFormatType = GL_UNSIGNED_BYTE;
+        break;
+    case 3:
+        // sRGB, not linear. The bits are identical either way -- an 8-bit texture
+        // uploaded from a JPEG2000/PNG/TGA asset already holds sRGB-encoded values --
+        // so this changes nothing about what is stored, only whether GL is willing to
+        // decode it. Sampling is unaffected unless a bind asks for the decode with
+        // ALSampler::SRGBDecode, and nothing does by default.
+        //
+        // Worth stating why it cannot be narrowed to colour textures: the same
+        // LLViewerFetchedTexture object serves whichever glTF slot references its UUID
+        // (see fetch_texture), so one image can be base colour for one material and a
+        // normal map for another. The format cannot know; only the bind can. Which is
+        // exactly the split the sampler work established.
+        mFormatInternal = GL_SRGB8;
+        mFormatPrimary = GL_RGB;
+        mFormatType = GL_UNSIGNED_BYTE;
+        break;
+    case 4:
+        mFormatInternal = GL_SRGB8_ALPHA8;
+        mFormatPrimary = GL_RGBA;
+        mFormatType = GL_UNSIGNED_BYTE;
+        break;
+    default:
+        LL_ERRS() << "Bad number of components for texture: " << (U32)mComponents << LL_ENDL;
+    }
+
+    // Calc alpha layout first (keys on the deprecated names), then
+    // rewrite the format to core-profile-valid forms.
+    calcAlphaChannelOffsetAndStride() ;
+    resolveDeprecatedFormat();
+}
+// </SS:Nexii>
+
 //----------------------------------------------------------------------------
 
 void LLImageGL::setImage(const LLImageRaw* imageraw)
@@ -921,6 +994,9 @@ void LLImageGL::setImage(const LLImageRaw* imageraw)
     llassert((imageraw->getWidth() == liveWidth(mCurrentDiscardLevel)) &&
              (imageraw->getHeight() == liveHeight(mCurrentDiscardLevel)) &&
              (imageraw->getComponents() == mComponents));
+    // <SS:Nexii> Squeeze - this overload has no mip chain, so a stale BPTC format here would be the fatal LL_ERRS in setImage
+    dropCompressedFormat("setImage(LLImageRaw) cannot describe a compressed upload");
+    // </SS:Nexii>
     const U8* rawdata = imageraw->getData();
     setImage(rawdata, false);
 }
@@ -928,6 +1004,23 @@ void LLImageGL::setImage(const LLImageRaw* imageraw)
 bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32 usename /* = 0 */)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
+
+    // <SS:Nexii> Squeeze - LAST RESORT for an undeclared BC7 exit: an uncompressed upload with mips on and no mip chain would otherwise hit the fatal LL_ERRS below. Warns because arriving here means a caller did not call dropCompressedFormat.
+    if (isCompressed() && mUseMipMaps && !data_hasmips && data_in != nullptr && mHasExplicitFormat)
+    {
+        LL_WARNS("Squeeze") << "compressed format " << std::hex << mFormatPrimary << std::dec
+                            << " reached setImage with mip maps enabled and no mip chain; dropping it, but the caller should have declared this transition" << LL_ENDL;
+        dropCompressedFormat("undeclared uncompressed upload into a compressed texture");
+    }
+
+    // Immutable storage cannot change format. createGLTexture builds a new name when the format changed, so only a direct setImage into a live texture gets here; refuse it rather than write sub-images GL will reject.
+    if (mStorageAllocated && mStorageFormat != 0 && mStorageFormat != getStorageInternalFormat())
+    {
+        LL_WARNS("Squeeze") << "setImage refused: storage is format " << std::hex << mStorageFormat << " but the upload is "
+                            << getStorageInternalFormat() << std::dec << "; the texture needs a new name" << LL_ENDL;
+        return false;
+    }
+    // </SS:Nexii>
 
     const bool is_compressed = isCompressed();
 
@@ -1745,6 +1838,15 @@ bool LLImageGL::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S
         return false;
     }
 
+    // <SS:Nexii> Squeeze - LAST RESORT: a compressed explicit format cannot describe an LLImageRaw upload. The deliberate BC7 exits drop it on the main thread before posting; reaching here still holding one means a caller did not.
+    if (mHasExplicitFormat && isCompressed())
+    {
+        LL_WARNS("Squeeze") << "undeclared compressed to uncompressed transition on format " << std::hex << mFormatPrimary << std::dec
+                            << " with " << (U32)mComponents << " components; recovering, but the caller should have called dropCompressedFormat" << LL_ENDL;
+        dropCompressedFormat("undeclared LLImageRaw upload into a compressed texture");
+    }
+    // </SS:Nexii>
+
     if (mHasExplicitFormat &&
         ((mFormatPrimary == GL_RGBA && mComponents < 4) ||
          (mFormatPrimary == GL_RGB  && mComponents < 3)))
@@ -1752,57 +1854,17 @@ bool LLImageGL::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S
     {
         LL_WARNS()  << "Incorrect format: " << std::hex << mFormatPrimary << " components: " << (U32)mComponents <<  LL_ENDL;
         mHasExplicitFormat = false;
+        // <SS:Nexii> a compressed format latched mNeedsAlphaAndPickMask off; restore it unless the caller asked for no mask
+        if (mAlphaOffset != INVALID_OFFSET)
+        {
+            mNeedsAlphaAndPickMask = true;
+        }
+        // </SS:Nexii>
     }
 
     if( !mHasExplicitFormat )
     {
-        switch (mComponents)
-        {
-        case 1:
-            // Single-channel — used by font glyph maps, but the path
-            // is generic for any 1-component upload. setManualImage
-            // swizzles LUMINANCE → R8 with a gray-replicate mask on
-            // core profile.
-            mFormatInternal = GL_LUMINANCE8;
-            mFormatPrimary = GL_LUMINANCE;
-            mFormatType = GL_UNSIGNED_BYTE;
-            break;
-        case 2:
-            // Two-channel (luminance + alpha). Same swizzle remap
-            // happens in setManualImage on core profile.
-            mFormatInternal = GL_LUMINANCE8_ALPHA8;
-            mFormatPrimary = GL_LUMINANCE_ALPHA;
-            mFormatType = GL_UNSIGNED_BYTE;
-            break;
-        case 3:
-            // sRGB, not linear. The bits are identical either way -- an 8-bit texture
-            // uploaded from a JPEG2000/PNG/TGA asset already holds sRGB-encoded values --
-            // so this changes nothing about what is stored, only whether GL is willing to
-            // decode it. Sampling is unaffected unless a bind asks for the decode with
-            // ALSampler::SRGBDecode, and nothing does by default.
-            //
-            // Worth stating why it cannot be narrowed to colour textures: the same
-            // LLViewerFetchedTexture object serves whichever glTF slot references its UUID
-            // (see fetch_texture), so one image can be base colour for one material and a
-            // normal map for another. The format cannot know; only the bind can. Which is
-            // exactly the split the sampler work established.
-            mFormatInternal = GL_SRGB8;
-            mFormatPrimary = GL_RGB;
-            mFormatType = GL_UNSIGNED_BYTE;
-            break;
-        case 4:
-            mFormatInternal = GL_SRGB8_ALPHA8;
-            mFormatPrimary = GL_RGBA;
-            mFormatType = GL_UNSIGNED_BYTE;
-            break;
-        default:
-            LL_ERRS() << "Bad number of components for texture: " << (U32)getComponents() << LL_ENDL;
-        }
-
-        // Calc alpha layout first (keys on the deprecated names), then
-        // rewrite the format to core-profile-valid forms.
-        calcAlphaChannelOffsetAndStride() ;
-        resolveDeprecatedFormat();
+        deriveFormatFromComponents(); // <SS:Nexii/> shared with dropCompressedFormat
     }
 
     if(!to_create) //not create a gl texture
@@ -1856,7 +1918,9 @@ bool LLImageGL::createGLTexture(S32 discard_level, const U8* data_in, bool data_
 
     if (main_thread // <--- always force creation of new_texname when not on main thread ...
         && !defer_copy // <--- ... or defer copy is set
-        && mTexName != 0 && discard_level == mCurrentDiscardLevel)
+        && mTexName != 0 && discard_level == mCurrentDiscardLevel
+        // <SS:Nexii/> immutable storage cannot change format (BC7 <-> uncompressed, or a component change), so that needs a new name
+        && (mStorageFormat == 0 || mStorageFormat == getStorageInternalFormat()))
     {
         LL_PROFILE_ZONE_NAMED("cglt - early setImage");
         // This will only be true if the size has not changed
@@ -2056,6 +2120,11 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
+    if (!imageraw)
+    {
+        return false;
+    }
+
     if (discard_level < 0)
     {
         discard_level = mCurrentDiscardLevel;
@@ -2063,6 +2132,14 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
 
     if (mTexName == 0 || discard_level < mCurrentDiscardLevel || discard_level > mMaxDiscardLevel )
     {
+        return false;
+    }
+
+    if (mTarget != GL_TEXTURE_2D)
+    {
+        // glGetTexImage below reads a single 2D mip; cube map and other targets
+        // cannot go through this path (querying them here raises GL_INVALID_ENUM)
+        LL_WARNS_ONCE() << "readBackRaw called on unsupported texture target: 0x" << std::hex << mTarget << std::dec << LL_ENDL;
         return false;
     }
 
@@ -2082,9 +2159,21 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
     //debug code, leave it there commented.
     //checkTexSize() ;
 
+    //-----------------------------------------------------------------------------------------------
+    // drain pending errors first so the dimension queries below can be trusted;
+    // an early return must not leave a stale error for the next caller either
+    GLenum error ;
+    while((error = glGetError()) != GL_NO_ERROR)
+    {
+        LL_WARNS() << "GL Error happens before reading back texture. Error code: " << error << LL_ENDL ;
+    }
+    //-----------------------------------------------------------------------------------------------
+
     LLGLint glwidth = 0;
+    LLGLint glheight = 0;
     glGetTexLevelParameteriv(mTarget, gl_discard, GL_TEXTURE_WIDTH, (GLint*)&glwidth);
-    if (glwidth == 0)
+    glGetTexLevelParameteriv(mTarget, gl_discard, GL_TEXTURE_HEIGHT, (GLint*)&glheight);
+    if (glGetError() != GL_NO_ERROR || glwidth == 0 || glheight == 0)
     {
         // No mip data smaller than current discard level
         return false;
@@ -2097,11 +2186,15 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
     {
         return false;
     }
-    if(width < glwidth)
+    if (width != glwidth || height != glheight)
     {
-        LL_WARNS() << "texture size is smaller than it should be." << LL_ENDL ;
-        LL_WARNS() << "width: " << width << " glwidth: " << glwidth << " mWidth: " << mWidth <<
-            " mCurrentDiscardLevel: " << (S32)mCurrentDiscardLevel << " discard_level: " << (S32)discard_level << LL_ENDL ;
+        // the GL texture no longer matches this object's bookkeeping (e.g. it was
+        // rescaled since); reading it back would overrun the destination buffer
+        LL_WARNS() << "texture size mismatch on readback." << LL_ENDL ;
+        LL_WARNS() << "width: " << width << " height: " << height
+            << " glwidth: " << glwidth << " glheight: " << glheight
+            << " mWidth: " << mWidth << " mHeight: " << mHeight
+            << " mCurrentDiscardLevel: " << (S32)mCurrentDiscardLevel << " discard_level: " << (S32)discard_level << LL_ENDL ;
         return false ;
     }
 
@@ -2116,20 +2209,16 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
         glGetTexLevelParameteriv(mTarget, gl_discard, GL_TEXTURE_COMPRESSED, (GLint*)&is_compressed);
     }
 
-    //-----------------------------------------------------------------------------------------------
-    GLenum error ;
-    while((error = glGetError()) != GL_NO_ERROR)
-    {
-        LL_WARNS() << "GL Error happens before reading back texture. Error code: " << error << LL_ENDL ;
-    }
-    //-----------------------------------------------------------------------------------------------
-
     LLImageDataLock lock(imageraw);
 
     if (is_compressed)
     {
-        LLGLint glbytes;
+        LLGLint glbytes = 0;
         glGetTexLevelParameteriv(mTarget, gl_discard, GL_TEXTURE_COMPRESSED_IMAGE_SIZE, (GLint*)&glbytes);
+        if (glGetError() != GL_NO_ERROR || glbytes <= 0)
+        {
+            return false;
+        }
         if(!imageraw->allocateDataSize(width, height, ncomponents, glbytes))
         {
             constexpr S64 MAX_GL_BYTES = 2048 * 2048;
@@ -2168,8 +2257,47 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
             return false ;
         }
 
-        glGetTexImage(GL_TEXTURE_2D, gl_discard, mFormatPrimary, mFormatType, (GLvoid*)(imageraw->getData()));
-        //stop_glerror();
+        // the destination buffer holds exactly width * height * ncomponents bytes;
+        // read back in that layout regardless of what mFormatPrimary/mFormatType
+        // claim, or a wider format (e.g. GL_BGRA into a 3-component buffer), a wider
+        // type, or a compressed format (BC7) would overrun or be rejected
+        S32 format_components = 0;
+        switch (mFormatPrimary)
+        {
+            case GL_RED:                  format_components = 1; break;
+            case GL_RG:                   format_components = 2; break;
+            case GL_RGB:                  format_components = 3; break;
+            case GL_RGBA: case GL_BGRA:   format_components = 4; break;
+            default:                      format_components = 0; break;
+        }
+
+        GLenum read_format = mFormatPrimary;
+        if (format_components != ncomponents)
+        {
+            switch (ncomponents)
+            {
+                case 1: read_format = GL_RED; break;
+                case 2: read_format = GL_RG; break;
+                case 3: read_format = GL_RGB; break;
+                default: read_format = GL_RGBA; break;
+            }
+        }
+
+        GLenum read_type = GL_UNSIGNED_BYTE;
+        if (mFormatType == GL_UNSIGNED_INT_8_8_8_8_REV && ncomponents == 4)
+        {
+            read_type = mFormatType;
+        }
+
+        // rows in LLImageRaw are tightly packed; the default GL_PACK_ALIGNMENT of 4
+        // would pad rows of small or 1/3-component mips past the end of the buffer
+        GLint old_pack_alignment = 4;
+        glGetIntegerv(GL_PACK_ALIGNMENT, &old_pack_alignment);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+
+        glGetTexImage(mTarget, gl_discard, read_format, read_type, (GLvoid*)(imageraw->getData()));
+
+        glPixelStorei(GL_PACK_ALIGNMENT, old_pack_alignment);
     }
 
     //-----------------------------------------------------------------------------------------------
@@ -2343,7 +2471,6 @@ void LLImageGL::setTarget(const LLGLenum target, const ALTextureSlot::eTextureTy
     mBindTarget = bind_target;
 }
 
-const S8 INVALID_OFFSET = -99 ;
 void LLImageGL::setNeedsAlphaAndPickMask(bool need_mask)
 {
     if(mNeedsAlphaAndPickMask != need_mask)
@@ -2388,6 +2515,13 @@ void LLImageGL::calcAlphaChannelOffsetAndStride()
         mNeedsAlphaAndPickMask = false;
         mIsMask = false;
         return; //no alpha channel.
+    // <SS:Nexii> BC7 blocks cannot be scanned byte-wise for alpha; suppress quietly instead of warning once per BC7 texture below
+    case GL_COMPRESSED_RGBA_BPTC_UNORM:
+    case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM:
+        mNeedsAlphaAndPickMask = false;
+        mIsMask = false;
+        return;
+    // </SS:Nexii>
     case GL_RGBA:
     case GL_SRGB_ALPHA:
         mAlphaStride = 4;
@@ -2513,7 +2647,8 @@ bool LLImageGL::analyzeAlphaData(
     U32 w,
     U32 h,
     S8 alpha_offset,
-    S8 alpha_stride)
+    S8 alpha_stride,
+    S32 discard_level)
 {
     if (!data_in || alpha_stride < 1)
     {
@@ -2614,6 +2749,12 @@ bool LLImageGL::analyzeAlphaData(
         (lowerhalftotal == length && alphatotal != 0) ||
         (upperhalftotal == length && alphatotal != 255 * length))
     {
+        // <SS:Nexii> A coarse mip cannot prove soft alpha: decimation smears hard cutout edges into midrange values, so "not a mask" from a discard coarser than sSSAlphaMaskTrustedDiscard is provisional. When all but 1/48 of the samples sit in the top bucket it is treated as a mask until a trusted discard settles it; LLViewerFetchedTexture::ssSyncAlphaMaskVerdict rebuilds the faces if a finer discard overturns the guess. doc/alpha_mask_verdict.md
+        if (sSSAlphaMaskTrustedDiscard >= 0 && discard_level > sSSAlphaMaskTrustedDiscard && (length - sample[15]) <= length / 48)
+        {
+            return true;
+        }
+        // </SS:Nexii>
         return false; // not suitable for masking
     }
     else
@@ -2636,7 +2777,7 @@ void LLImageGL::analyzeAlpha(const void* data_in, U32 w, U32 h)
         // but increment either way, for extra safety.
         ++mAlphaAnalysisSerial;
 
-        mIsMask = analyzeAlphaData(data_in, w, h, mAlphaOffset, mAlphaStride);
+        mIsMask = analyzeAlphaData(data_in, w, h, mAlphaOffset, mAlphaStride, mCurrentDiscardLevel);
         return;
     }
 
@@ -2646,6 +2787,7 @@ void LLImageGL::analyzeAlpha(const void* data_in, U32 w, U32 h)
     const S8 alpha_offset = mAlphaOffset;
     const S8 alpha_stride = mAlphaStride;
     const U32 request_serial = ++mAlphaAnalysisSerial;
+    const S32 discard_level = mCurrentDiscardLevel; // <SS:Nexii/> the level being uploaded, for the trusted-discard verdict
 
     // Copy data for worker thread
     const size_t data_size = size_t(w) * size_t(h) * size_t(alpha_stride);
@@ -2654,7 +2796,7 @@ void LLImageGL::analyzeAlpha(const void* data_in, U32 w, U32 h)
     if (!data_copy)
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
-        mIsMask = analyzeAlphaData(data_in, w, h, alpha_offset, alpha_stride);
+        mIsMask = analyzeAlphaData(data_in, w, h, alpha_offset, alpha_stride, discard_level);
         return;
     }
     memcpy(data_copy, static_cast<const U8*>(data_in), data_size);
@@ -2676,10 +2818,10 @@ void LLImageGL::analyzeAlpha(const void* data_in, U32 w, U32 h)
         posted_job = mainq->postTo(
             workerq,
             // Worker thread: analyze alpha
-            [data_copy, w, h, alpha_offset, alpha_stride]() -> bool
+            [data_copy, w, h, alpha_offset, alpha_stride, discard_level]() -> bool
         {
             LL_PROFILE_ZONE_NAMED("Deffered alpha mask analysis");
-            bool is_mask = LLImageGL::analyzeAlphaData(data_copy, w, h, alpha_offset, alpha_stride);
+            bool is_mask = LLImageGL::analyzeAlphaData(data_copy, w, h, alpha_offset, alpha_stride, discard_level);
             delete[] data_copy;
             return is_mask;
         },
@@ -2716,7 +2858,7 @@ void LLImageGL::analyzeAlpha(const void* data_in, U32 w, U32 h)
         LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
         // Queues not available - fall back to synchronous analysis
         delete[] data_copy;
-        mIsMask = analyzeAlphaData(data_in, w, h, mAlphaOffset, mAlphaStride);
+        mIsMask = analyzeAlphaData(data_in, w, h, mAlphaOffset, mAlphaStride, mCurrentDiscardLevel);
     }
 }
 
@@ -2754,9 +2896,69 @@ void LLImageGL::freePickMask()
     mPickMaskWidth = mPickMaskHeight = 0;
 }
 
-// <SS:Nexii> Squeeze statics, see llimagegl.h
+// <SS:Nexii> Squeeze, see llimagegl.h and doc/super_compressed_textures.md
 S32  LLImageGL::sSSAlphaMaskTrustedDiscard = 2;
 bool LLImageGL::sSqueezeEnabled = false;
+
+// static
+bool LLImageGL::canUseSqueeze()
+{
+    return sSqueezeEnabled && gGLManager.mHasBPTC && !gGLManager.mIsDisabled;
+}
+
+void LLImageGL::dropCompressedFormat(const char* reason)
+{
+    if (!mHasExplicitFormat || mFormatPrimary == 0 || !isCompressed())
+    {
+        return;
+    }
+
+    LL_DEBUGS("Squeeze") << "dropping compressed format " << std::hex << mFormatPrimary << std::dec
+                         << " for " << (U32)mComponents << " component uncompressed upload: "
+                         << (reason ? reason : "no reason given") << LL_ENDL;
+
+    mHasExplicitFormat = false;
+
+    if (mComponents < 1 || mComponents > 4)
+    {
+        // Only reachable if a compressed format was attached to an image whose component count was never established; four costs memory, the LL_ERRS in deriveFormatFromComponents costs the session.
+        LL_WARNS("Squeeze") << "compressed format dropped on an image with " << (U32)mComponents
+                            << " components, assuming four so the format can be re-derived" << LL_ENDL;
+        mComponents = 4;
+    }
+
+    // The compressed format latched mNeedsAlphaAndPickMask off in calcAlphaChannelOffsetAndStride and nothing turns it back on; restore it first so the re-derive can latch it off again for a format with no alpha.
+    if (mAlphaOffset != INVALID_OFFSET)
+    {
+        mNeedsAlphaAndPickMask = true;
+    }
+
+    deriveFormatFromComponents();
+}
+
+// The mNeedsAlphaAndPickMask gate is deliberately not consulted: it is latched off for a compressed format, and getMask reads only mPickMask.
+// The bits are updatePickMask's (ceil(w/2) cells per row, linear), but the store sizes its buffer as (w/2+1)*(h/2+1) bits, the old createPickMask arithmetic, and records on disk carry that size. Both sizes are accepted; only the prefix createPickMask allocates is copied, which holds every bit either layout set.
+bool LLImageGL::ssSetPickMask(S32 width, S32 height, const U8* bits, U32 bytes)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
+    if (!bits || bytes == 0 || width <= 0 || height <= 0)
+    {
+        return false;
+    }
+
+    const U32 tight  = (((U32)width + 1) / 2 * (((U32)height + 1) / 2) + 7) / 8;
+    const U32 stored = (((U32)width / 2 + 1) * ((U32)height / 2 + 1) + 7) / 8;
+    if (bytes != tight && bytes != stored)
+    {
+        LL_WARNS_ONCE("Squeeze") << "stored pick mask of " << bytes << " bytes does not fit " << width << "x" << height
+                                 << " (expected " << stored << "), texture will pick as a whole quad" << LL_ENDL;
+        return false;
+    }
+
+    const U32 size = createPickMask(width, height);
+    memcpy(mPickMask, bits, llmin(size, bytes));
+    return true;
+}
 // </SS:Nexii>
 
 bool LLImageGL::isCompressed() const
@@ -2772,6 +2974,8 @@ bool LLImageGL::isCompressed() const
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:
     case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:
+    case GL_COMPRESSED_RGBA_BPTC_UNORM:       // <SS:Nexii/> Squeeze BC7
+    case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM:
         is_compressed = true;
         break;
     default:
@@ -2935,9 +3139,11 @@ void LLImageGL::allocateTextureStorage(S32 width, S32 height, bool has_mips)
         glTexStorage2D(mTarget, mMipLevels, getStorageInternalFormat(), width, height);
         skipSRGBDecode(mTarget);
         mStorageAllocated = true;
+        mStorageFormat = getStorageInternalFormat(); // <SS:Nexii/>
     }
 
-    alloc_tex_image(width, height, mFormatInternal, 1, has_mips);
+    // <SS:Nexii/> account what was allocated: a compressed texture's sized format lives in mFormatPrimary
+    alloc_tex_image(width, height, getStorageInternalFormat(), 1, has_mips);
 }
 
 // static

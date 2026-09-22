@@ -21,6 +21,7 @@
 #include "llerror.h"
 #include "llevents.h"
 #include "llsd.h"
+#include "llthread.h"
 #include "stringize.h"
 
 #include <boost/fiber/algo/round_robin.hpp>
@@ -137,6 +138,7 @@ void LL::ThreadPoolBase::close()
 
 void LL::ThreadPoolBase::run(const std::string& name)
 {
+    set_thread_fp_mode(); // SKOOMA-PORT: as Alchemy, workers flush denormals like the main thread
 #if LL_WINDOWS
     // Try using sleepy_robin fiber scheduler.
     boost::fibers::use_scheduling_algorithm<sleepy_robin>();

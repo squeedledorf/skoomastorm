@@ -150,7 +150,8 @@ public:
 protected:
     virtual ~LLImageGL();
 
-    static bool analyzeAlphaData(const void* data_in, U32 w, U32 h, S8 alpha_offset, S8 alpha_stride);
+    // discard_level is the level the data was uploaded at; see sSSAlphaMaskTrustedDiscard. <SS:Nexii/>
+    static bool analyzeAlphaData(const void* data_in, U32 w, U32 h, S8 alpha_offset, S8 alpha_stride, S32 discard_level = -1);
     void analyzeAlpha(const void* data_in, U32 w, U32 h);
     void calcAlphaChannelOffsetAndStride();
 
@@ -235,15 +236,23 @@ public:
     void setExplicitFormat(LLGLint internal_format, LLGLenum primary_format, LLGLenum type_format = 0, bool swap_bytes = false);
     void setComponents(S8 ncomponents) { mComponents = ncomponents; }
 
-    // <SS:Nexii> Squeeze (BC7) API. SKOOMA-PORT: dormant stubs until the BC7 upload path is re-ported onto
-    // this llimagegl (canUseSqueeze() is false, so no caller ever reaches a BC7 upload).
-    void dropCompressedFormat(const char* reason) {}
+    // <SS:Nexii> Squeeze - the BC7 to uncompressed transition as a named operation: clears the explicit format AND re-derives an uncompressed one in the same breath, because between those two steps isCompressed() still answers true. Main thread, before an uncompressed upload is posted. It only changes the format fields: immutable storage cannot be re-specified, so the next upload builds a new texture name (see mStorageFormat) and the BC7 name stays bound until that one is published.
+    void dropCompressedFormat(const char* reason);
+
+    // Squeeze - the store classifies alpha shape at encode time, because BC7 blocks cannot be scanned byte-wise and calcAlphaChannelOffsetAndStride forces mIsMask false for BPTC.
     void setIsAlphaMask(bool is_mask) { mIsMask = is_mask; }
-    bool ssSetPickMask(S32 width, S32 height, const U8* bits, U32 bytes) { return false; }
+
+    // Squeeze - installs a pick mask built elsewhere, in exactly the layout updatePickMask produces for a width x height RGBA image. Returns false and leaves no mask when the byte count does not fit the geometry.
+    bool ssSetPickMask(S32 width, S32 height, const U8* bits, U32 bytes);
+
     bool isCompressed() const;
+
+    // Coarsest discard level whose "not a mask" verdict from analyzeAlpha is final; uploads coarser than it are provisional and may guess "mask" for a nearly all-opaque histogram. -1 trusts every level, which is stock behaviour. doc/alpha_mask_verdict.md
     static S32 sSSAlphaMaskTrustedDiscard;
+
+    // sSqueezeEnabled mirrors the SSSqueezeEnabled setting; canUseSqueeze() also requires BPTC so callers fall back to the uncompressed path in silence, see doc/super_compressed_textures.md
     static bool sSqueezeEnabled;
-    static bool canUseSqueeze() { return false; }
+    static bool canUseSqueeze();
     // </SS:Nexii>
 
     // While an off-thread upload is in flight the members below describe the texture
@@ -355,6 +364,9 @@ private:
     U32 createPickMask(S32 pWidth, S32 pHeight);
     void freePickMask();
 
+    // <SS:Nexii/> Squeeze - the component-count to GL format switch createGLTexture used to inline, shared with dropCompressedFormat so the two cannot disagree.
+    void deriveFormatFromComponents();
+
     LLPointer<LLImageRaw> mSaveData; // used for destroyGL/restoreGL
     LL::WorkQueue::weak_t mMainQueue;
     U8* mPickMask;  //downsampled bitmap approximation of alpha channel.  NULL if no alpha channel
@@ -412,6 +424,8 @@ private:
     // shared texture object allocated on this instance's behalf -- see LLCubeMap, where one
     // glTexStorage2D call covers all six faces. Reset whenever a fresh name is bound.
     bool     mStorageAllocated = false;
+    // <SS:Nexii/> The internal format that storage was allocated with, 0 when unknown (markStorageAllocated). A format change (BC7 <-> uncompressed, or a component count change) must not write sub-images into it; createGLTexture builds a new name instead.
+    S32      mStorageFormat = 0;
     U16      mWidth;
     U16      mHeight;
     S8       mCurrentDiscardLevel;
@@ -495,7 +509,7 @@ public:
     // objects and no individual object is in a position to allocate: glTexStorage2D on
     // GL_TEXTURE_CUBE_MAP allocates all six faces in one call, so LLCubeMap makes it and
     // the six per-face objects only ever write sub-images.
-    void markStorageAllocated() { mStorageAllocated = true; }
+    void markStorageAllocated() { mStorageAllocated = true; mStorageFormat = 0; }
 
     //similar to setTexName, but will call deleteTextures on mTexName if mTexName is not 0 or texname
     void syncTexName(LLGLuint texname);

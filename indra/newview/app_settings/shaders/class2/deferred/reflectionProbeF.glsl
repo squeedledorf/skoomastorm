@@ -52,6 +52,13 @@ void sampleReflectionProbesWater(inout vec3 ambenv, inout vec3 glossenv,
     sampleReflectionProbes(ambenv, glossenv, tc, pos, norm, glossiness, false, amblit_linear);
 }
 
+// <SS:Nexii> The sky mirror's tap (class3 waterF) when reflection probes are off: the environment map
+// along the same direction, linearised the way glossenv is above. Without it the water program fails to link.
+vec3 ssSampleSkyProbe(vec3 dir, float roughness)
+{
+    return srgb_to_linear(texture(environmentMap, env_mat * dir).rgb);
+}
+
 vec4 sampleReflectionProbesDebug(vec3 pos)
 {
     // show nothing in debug display
