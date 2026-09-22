@@ -28276,7 +28276,7 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>64.0</real>
+      <real>160.0</real>
     </map>
     <key>OCOLHeightFogRollM</key>
       <map>
@@ -28287,7 +28287,7 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>6.0</real>
+      <real>33.5</real>
     </map>
     <key>SSAtmoHeatShimmer</key>
       <map>

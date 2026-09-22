@@ -242,13 +242,13 @@
     <slider_bar
       control_name="OCOLHeightFogRollM" name="SB_ocolfog_roll"
       follows="left|top" layout="topleft"
-      left_pad="4" top_delta="0" height="16" width="160" min_val="0" max_val="20" increment="0.5"
+      left_pad="4" top_delta="0" height="16" width="160" min_val="0" max_val="64" increment="0.5"
       tool_tip="How far the bank noise rolls the layer top up and down. 0 is a flat-topped layer with only the wisps left" />
     <spinner
       control_name="OCOLHeightFogRollM" name="S_ocolfog_roll"
       follows="left|top" layout="topleft"
       left_pad="4" top_delta="-2" height="20" width="62"
-      label_width="0" min_val="0" max_val="20" increment="0.5" decimal_digits="1"
+      label_width="0" min_val="0" max_val="64" increment="0.5" decimal_digits="1"
       tool_tip="How far the bank noise rolls the layer top up and down. 0 is a flat-topped layer with only the wisps left" />
     <button
       follows="left|top" layout="topleft"

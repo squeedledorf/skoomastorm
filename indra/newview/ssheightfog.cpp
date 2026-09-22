@@ -450,10 +450,10 @@ void SSHeightFog::renderOCOL(LLGLSLShader& shader, const LLVector3& wind)
 {
     static LLCachedControl<S32> ocol_steps(gSavedSettings, "OCOLHeightFogSteps", 32);
     static LLCachedControl<bool> ocol_shafts(gSavedSettings, "OCOLHeightFogShafts", true);
-    static LLCachedControl<F32> ocol_feature(gSavedSettings, "OCOLHeightFogFeatureM", 64.f);
-    static LLCachedControl<F32> ocol_roll(gSavedSettings, "OCOLHeightFogRollM", 6.f);
+    static LLCachedControl<F32> ocol_feature(gSavedSettings, "OCOLHeightFogFeatureM", 160.f);
+    static LLCachedControl<F32> ocol_roll(gSavedSettings, "OCOLHeightFogRollM", 33.5f);
     const F32 feature_m = llclamp((F32)ocol_feature, 16.f, 256.f);
-    const F32 roll_m = llclamp((F32)ocol_roll, 0.f, 20.f);
+    const F32 roll_m = llclamp((F32)ocol_roll, 0.f, 64.f);
     static LLCachedControl<S32> debug_view(gSavedSettings, "SSAtmoHeightFogDebug", 0);
 
     static LLStaticHashedString fog_steps("ocolFogSteps");
