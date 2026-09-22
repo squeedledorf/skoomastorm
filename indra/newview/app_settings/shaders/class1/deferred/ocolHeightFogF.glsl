@@ -203,26 +203,46 @@ float ign(vec2 px)
 // lets wisp (ground and mist): the banks roll the layer's top and break it into drifting
 // masses. Precipitation, the squall and the drift band are driven weather already in
 // motion and stay as the flat path has them. The water gate is the caller's, as there.
+// The column gate at one point: 1 in the open; under a surface it fades out over the first
+// metres (eaves, bridges, awnings, the roof line of a doorway: air fog drifts under), then the
+// cover window's enclosure decides, and with no window a deep column is closed. surface_z is
+// the height reference the point measures its layer from.
+const float OCOL_FOG_INTERIOR_FADE_M = 4.0;
+const float OCOL_FOG_GATE_BLUR_M = 1.5;
+float ocolFogGate(vec2 xy, float z, out float surface_z)
+{
+    vec4 here = ssFieldFetch(xy);
+    surface_z = ssFogGroundZ;
+    if (here.x <= -1.0e5)
+    {
+        return 1.0;
+    }
+    float under = here.x - z;
+    if (under <= 0.75)
+    {
+        surface_z = here.x;
+        return 1.0;
+    }
+    float cover = ssFieldFetchCover(xy);
+    float enclosed = (cover > -0.5) ? clamp(cover, 0.0, 1.0) : 1.0;
+    return 1.0 - enclosed * smoothstep(0.75, 0.75 + OCOL_FOG_INTERIOR_FADE_M, under);
+}
+
 float ocolFogDensityAt(vec3 q)
 {
-    vec4 here = ssFieldFetch(q.xy);
-
-    float surface_z = ssFogGroundZ;
-    float openness = 1.0;
-
-    if (here.x > -1.0e5)
+    float surface_z;
+    float openness = ocolFogGate(q.xy, q.z, surface_z);
+    // Widen the gate across its edge: a roof line or a doorway is otherwise a wall of fog
+    // against none, one field cell wide.
     {
-        if (here.x - q.z > 0.75)
-        {
-            float cover = ssFieldFetchCover(q.xy);
-            openness = (cover > -0.5) ? 1.0 - clamp(cover, 0.0, 1.0) : 0.0;
-            if (openness < 0.001) return 0.0;
-        }
-        else
-        {
-            surface_z = here.x;
-        }
+        float unused;
+        openness = (openness * 2.0
+                    + ocolFogGate(q.xy + vec2( OCOL_FOG_GATE_BLUR_M, 0.0), q.z, unused)
+                    + ocolFogGate(q.xy + vec2(-OCOL_FOG_GATE_BLUR_M, 0.0), q.z, unused)
+                    + ocolFogGate(q.xy + vec2(0.0,  OCOL_FOG_GATE_BLUR_M), q.z, unused)
+                    + ocolFogGate(q.xy + vec2(0.0, -OCOL_FOG_GATE_BLUR_M), q.z, unused)) / 6.0;
     }
+    if (openness < 0.001) return 0.0;
 
     float h = max(q.z - surface_z, 0.0);
 

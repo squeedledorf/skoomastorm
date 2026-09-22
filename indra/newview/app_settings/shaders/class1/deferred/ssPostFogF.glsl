@@ -208,8 +208,12 @@ float ssFogDensityAt(vec3 q)
             // (world field off, tile stale, sub-band solid), reads as fully
             // enclosed, so without a world field answer the march is
             // bit-identical to what it was.
+            // The first metres under a surface are eaves, bridges and roof lines that fog
+            // drifts beneath, so the gate fades in over them rather than cutting at 0.75 m
+            // (LOCKSTEP ocolHeightFogF.glsl ocolFogGate, which also blurs across the edge).
             float cover = ssFieldFetchCover(q.xy);
-            openness = (cover > -0.5) ? 1.0 - clamp(cover, 0.0, 1.0) : 0.0;
+            float enclosed = (cover > -0.5) ? clamp(cover, 0.0, 1.0) : 1.0;
+            openness = 1.0 - enclosed * smoothstep(0.75, 0.75 + 4.0, here.x - q.z);
             if (openness < 0.001) return 0.0;
         }
         else
