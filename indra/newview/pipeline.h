@@ -458,7 +458,16 @@ public:
 
     // SKOOMA-PORT: our depth_func parameter (default GL_LESS, never passed by any caller) dropped for
     // Alchemy's signature; Alchemy picks the shadow depth func itself for reverse-Z.
-    void renderShadow(const LLMatrix4a& view, const LLMatrix4a& proj, LLCamera& camera, LLCullResult& result, bool depth_clamp, bool do_cull = true);
+    // <SS:ShadowCache> which partitions a shadow cull walks: everything, the static octree
+    // only (no bridges, no avatars), or only the movers (bridges and avatars).
+    enum EShadowCullFilter { SHADOW_CULL_ALL = 0, SHADOW_CULL_STATIC, SHADOW_CULL_DYNAMIC };
+    static EShadowCullFilter sShadowCullFilter;
+    void renderShadow(const LLMatrix4a& view, const LLMatrix4a& proj, LLCamera& camera, LLCullResult& result, bool depth_clamp, bool do_cull = true, EShadowCullFilter filter = SHADOW_CULL_ALL);
+    // A static spatial group changed (rebuilt, emptied, took or lost an object): any cached
+    // cascade whose box holds these bounds re-renders. Called from llspatialpartition.
+    void shadowCacheNoteStaticChange(const LLVector4a& center, const LLVector4a& half);
+    void releaseShadowCache();
+    bool renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp, const LLVector3& lightDir, const LLPlane& shadow_near_clip, const LLCamera& camera, const LLMatrix4a& inv_view, bool& soft_refreshed);
     void renderSelectedFaces(const LLColor4& color);
     void renderHighlights();
     bool renderVignette(LLRenderTarget* src, LLRenderTarget* dst);
@@ -1030,6 +1039,29 @@ public:
     LLVector4               mShadowFOV;
     LLVector3               mShadowFrustOrigin[4];
     LLCamera                mShadowCamera[8];
+    // <SS:ShadowCache> the static depth of each sun cascade, kept across frames: an ortho
+    // light-space box padded past the cascade's slice, refreshed when the slice leaves the
+    // box, the sun moves, static geometry inside changes, or it ages out. Every frame the
+    // output cascade is this depth blitted in, plus the movers drawn on top.
+    struct ShadowCascadeCache
+    {
+        LLRenderTarget  mDepth;
+        LLCamera        mCamera;
+        LLMatrix4a      mView;
+        LLMatrix4a      mProj;
+        LLVector3       mMin;            // light-space box the cache covers
+        LLVector3       mMax;
+        LLVector3       mLightDir;
+        LLVector3d      mRegionOrigin;   // agent space moves with the region; a change voids the box
+        U32             mFrame = 0;
+        F32             mTime = 0.f;
+        bool            mValid = false;
+        bool            mDirty = false;
+    };
+    ShadowCascadeCache      mShadowCache[4];
+    std::vector<std::pair<LLVector4a, LLVector4a>> mShadowCacheNotes; // (center, half-size) of static groups changed this frame
+    bool                    mShadowCacheNotesOverflow = false;
+    U32                     mShadowCacheRefreshes[4] = { 0, 0, 0, 0 };
     LLVector3               mShadowExtents[4][2];
     // TODO : separate Sun Shadow and Spot Shadow matrices
     LLMatrix4a              mSunShadowMatrix[6];

@@ -404,6 +404,12 @@ void LLSpatialPartition::rebuildGeom(LLSpatialGroup* group)
 
     group->mLastUpdateTime = gFrameTimeSeconds;
     group->clearState(LLSpatialGroup::GEOM_DIRTY);
+
+    // <SS:ShadowCache> and the bounds it has after the rebuild, which may reach further
+    if (!isBridge())
+    {
+        gPipeline.shadowCacheNoteStaticChange(group->getObjectBounds()[0], group->getObjectBounds()[1]);
+    }
 }
 
 
@@ -528,6 +534,13 @@ void LLSpatialGroup::setState(U32 state, S32 mode)
     else
     {
         mState |= state;
+    }
+
+    // <SS:ShadowCache> a static group about to change: its current bounds are what a cached
+    // sun cascade has drawn and must redraw.
+    if ((state & GEOM_DIRTY) && !getSpatialPartition()->isBridge())
+    {
+        gPipeline.shadowCacheNoteStaticChange(mObjectBounds[0], mObjectBounds[1]);
     }
 }
 
