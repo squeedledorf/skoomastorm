@@ -105,9 +105,13 @@ float ssFieldFetchCover(vec2 xy_agent);
 
 float getDepth(vec2 pos_screen);
 vec4 getPositionWithDepth(vec2 pos_screen, float depth);
+bool isFarDepth(float d);
 
 #if defined(HAS_SUN_SHADOW)
-float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen);
+// One compare tap on the right cascade, no derivatives: the march runs in non-uniform
+// control flow, where the receiver-plane bias's dFdx would be undefined, and a shaft only
+// needs the one tap anyway.
+float sampleDirectionalShadowSingleTap(vec3 pos);
 #endif
 
 // ---------------------------------------------------------------------------
@@ -288,10 +292,13 @@ float ocolFogLayerOD(float h0, float dz, float len, float density, float falloff
     return max(od, 0.0);
 }
 
-// The tail's four terms plus the drift band, against the flat ground reference.
+// The tail's four terms plus the drift band, against the flat ground reference. The marched
+// stretch multiplies ground and mist by wisp (0.75-1) and breakup (0-1.5); the tail carries
+// their mean so the density does not step up at the march distance.
+const float OCOL_FOG_TAIL_BREAKUP = 0.66;
 float ocolFogTailOD(float h0, float dz, float len)
 {
-    float od = ocolFogLayerOD(h0, dz, len, ssFogGround + ssFogMist, SS_FOG_GROUND_SCALE_M)
+    float od = ocolFogLayerOD(h0, dz, len, (ssFogGround + ssFogMist) * OCOL_FOG_TAIL_BREAKUP, SS_FOG_GROUND_SCALE_M)
              + ocolFogLayerOD(h0, dz, len, ssFogPrecip, SS_FOG_PRECIP_SCALE_M)
              + ocolFogLayerOD(h0, dz, len, ssFogSquall, max(ssFogSquallScale, 4.0));
     // the band: constant ssFogLift wherever h < ssFogBand
@@ -319,7 +326,7 @@ void main()
     vec3 pos = getPositionWithDepth(tc, depth).xyz;
 
     // Sky by depth alone, as the flat path: no G-buffer is bound to this post program.
-    bool is_sky = depth >= 0.99995;
+    bool is_sky = isFarDepth(depth);
     float scene_len = length(pos);
     vec3 view_dir = pos / max(scene_len, 1e-4);
 
@@ -340,26 +347,31 @@ void main()
     float phase = ssFogHG(dot(dir_agent, ssFogSunDir), SS_FOG_HG_G);
     vec3 sun_light = ssFogSunColor * SS_FOG_SUN_GLOW * phase;
 
-#if defined(HAS_SUN_SHADOW)
-    // The light direction in view space, for the shadow lookup's slope offset (which a
-    // direction parallel to the light zeroes).
-    vec3 light_view = normalize(transpose(mat3(ssFieldInvView)) * ssFogSunDir);
-#endif
+    if (ssFogDebug > 1.5)
+    {   // the flat path's diagnosis: the density at the ray's midpoint, x5
+        vec3 q = cam_agent + dir_agent * (end_len * 0.5);
+        float d = ocolFogDensityAt(q) * smoothstep(ssFogWaterZ - 0.10, ssFogWaterZ + 0.15, q.z);
+        frag_color = vec4(vec3(d * 5.0), 1.0);
+        return;
+    }
 
     float transmittance = 1.0;
     vec3 inscatter = vec3(0.0);
 
     int steps = max(ocolFogSteps, 4);
     float jitter = ign(gl_FragCoord.xy);
-    float t_prev = 0.0;
 
     for (int i = 0; i < steps; ++i)
     {
-        // quadratic spacing: fine steps near the camera where fog moves fastest on screen
-        float s = (float(i) + jitter) / float(steps);
-        float t = end_len * s * s;
-        float dt = t - t_prev;
-        t_prev = t;
+        // quadratic spacing: fine steps near the camera where fog moves fastest on screen.
+        // Step i owns the segment [t0, t1] and samples it at a jittered point, so the whole
+        // ray to end_len is integrated whatever the jitter.
+        float s0 = float(i) / float(steps);
+        float s1 = float(i + 1) / float(steps);
+        float t0 = end_len * s0 * s0;
+        float t1 = end_len * s1 * s1;
+        float t = mix(t0, t1, jitter);
+        float dt = t1 - t0;
 
         vec3 q = cam_agent + dir_agent * t;
 
@@ -376,8 +388,7 @@ void main()
 #if defined(HAS_SUN_SHADOW)
         if (ocolFogShafts == 1)
         {
-            shadow = sampleDirectionalShadow(view_dir * t, light_view, tc);
-            shadow = (shadow >= 0.0) ? min(shadow, 1.0) : 1.0; // no cascade weight can give NaN
+            shadow = clamp(sampleDirectionalShadowSingleTap(view_dir * t), 0.0, 1.0);
         }
 #endif
 

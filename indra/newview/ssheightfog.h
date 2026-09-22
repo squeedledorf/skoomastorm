@@ -65,7 +65,7 @@ public:
     // blend. Chosen by OCOLHeightFog; falls back to the flat path when its shaders or target
     // are not there. Called by render() with the fog uniforms already uploaded to the march
     // program; returns with screen bound again.
-    void renderOCOL(LLGLSLShader& shader, const LLVector3& wind);
+    void renderOCOL(LLGLSLShader& shader, const LLVector3& wind, F32 debug_view);
     bool ensureOCOLTarget(U32 w, U32 h);
     // </OCOL>
 
@@ -94,6 +94,10 @@ private:
 
     LLRenderTarget mDepthCopy;  // the screen's depth, staged for the veil shader
     LLRenderTarget mOCOLTarget; // <OCOL> the volumetric march, at OCOLHeightFogScale of the screen
+    U32 mOCOLFailW = 0;         // <OCOL> size the target last failed to allocate at, so a failure is not retried every frame
+    U32 mOCOLFailH = 0;
+    F64 mOCOLDrift0[3] = { 0.0, 0.0, 0.0 }; // <OCOL> bank-noise drift, a running sum of wind*dt wrapped to the tile
+    F64 mOCOLDrift1[3] = { 0.0, 0.0, 0.0 };
 };
 
 #endif
