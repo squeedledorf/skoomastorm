@@ -871,7 +871,7 @@ void LLFloaterModelPreview::draw3dPreview()
 {
     gGL.color3f(1.f, 1.f, 1.f);
 
-    gGL.getTexUnit(0)->bind(mModelPreview);
+    gGL.getTextureSlot(0)->bindSampled(mModelPreview, ALSamplers::AnisoWrap);
 
     gGL.begin(LLRender::TRIANGLES);
     {
@@ -891,7 +891,7 @@ void LLFloaterModelPreview::draw3dPreview()
     }
     gGL.end();
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 }
 
 //-----------------------------------------------------------------------------

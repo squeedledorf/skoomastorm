@@ -27,6 +27,8 @@
 //-----------------------------------------------------------------------------
 // Header Files
 //-----------------------------------------------------------------------------
+#include "linden_common.h"
+
 #include "llavatarjoint.h"
 
 #include "llgl.h"
@@ -222,7 +224,7 @@ void LLAvatarJoint::setMeshesToChildren()
 
 LLAvatarJointCollisionVolume::LLAvatarJointCollisionVolume()
 {
-    mUpdateXform = false;
+    setUpdateXform(false);
 }
 
 /*virtual*/
@@ -234,7 +236,7 @@ U32 LLAvatarJointCollisionVolume::render( F32 pixelArea, bool first_pass, bool i
 
 LLVector3 LLAvatarJointCollisionVolume::getVolumePos(LLVector3 &offset)
 {
-    mUpdateXform = true;
+    setUpdateXform(true);
 
     LLVector3 result = offset;
     result.scaleVec(getScale());
@@ -246,10 +248,8 @@ LLVector3 LLAvatarJointCollisionVolume::getVolumePos(LLVector3 &offset)
 
 void LLAvatarJointCollisionVolume::renderCollision()
 {
-    updateWorldMatrix();
-
     gGL.pushMatrix();
-    gGL.multMatrix( &mXform.getWorldMatrix().mMatrix[0][0] );
+    gGL.multMatrix( getWorldMatrix().getF32ptr() );
 
     gGL.diffuseColor3f( 0.f, 0.f, 1.f );
 

@@ -36,7 +36,8 @@
 #include "llshadermgr.h"
 #include "llglslshader.h"
 #include "llmemory.h"
-#include <glm/gtc/type_ptr.hpp>
+
+#include <boost/unordered_map.hpp>
 
 //Next Highest Power Of Two
 //helper function, returns first number > v that is a power of 2, or v if v is already a power of 2
@@ -297,18 +298,21 @@ static void delete_buffers(S32 count, GLuint* buffers)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
     // wait a few frames before actually deleting the buffers to avoid
     // synchronization issues with the GPU
-    static std::vector<GLuint> sFreeList[4];
+    constexpr U32 BUCKET_COUNT = 4;
+    static std::vector<GLuint> sFreeList[BUCKET_COUNT];
 
     if (gGLManager.mInited)
     {
-        U32 idx = LLImageGL::sFrameCount % 4;
+        // Move current frame to free list
+        U32 idx = LLImageGL::sFrameCount % BUCKET_COUNT;
 
         for (S32 i = 0; i < count; ++i)
         {
             sFreeList[idx].push_back(buffers[i]);
         }
 
-        idx = (LLImageGL::sFrameCount + 3) % 4;
+        // Clear frame -3 (equals +1), this idx will be written over on the next call
+        idx = (LLImageGL::sFrameCount + 1) % BUCKET_COUNT;
 
         if (!sFreeList[idx].empty())
         {
@@ -326,8 +330,8 @@ class LLVBOPool
 {
     public:
     virtual ~LLVBOPool() = default;
-    virtual void allocate(GLenum type, U32 size, GLuint& name, U8*& data) = 0;
-    virtual void free(GLenum type, U32 size, GLuint name, U8* data) = 0;
+    virtual void allocateVBO(GLenum type, U32 size, GLuint& name, U8*& data) = 0;
+    virtual void freeVBO(GLenum type, U32 size, GLuint name, U8* data) = 0;
     virtual U64 getVramBytesUsed() = 0;
 };
 
@@ -343,7 +347,7 @@ public:
         return mAllocated;
     }
 
-    void allocate(GLenum type, U32 size, GLuint& name, U8*& data) override
+    void allocateVBO(GLenum type, U32 size, GLuint& name, U8*& data) override
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
         STOP_GLERROR;
@@ -363,7 +367,7 @@ public:
         }
     }
 
-    void free(GLenum type, U32 size, GLuint name, U8* data) override
+    void freeVBO(GLenum type, U32 size, GLuint name, U8* data) override
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
         llassert(type == GL_ARRAY_BUFFER || type == GL_ELEMENT_ARRAY_BUFFER);
@@ -401,7 +405,7 @@ public:
         clear();
     }
 
-    typedef std::unordered_map<U32, std::list<Entry>> Pool;
+    typedef boost::unordered_map<U32, std::list<Entry>> Pool;
 
     Pool mVBOPool;
     Pool mIBOPool;
@@ -427,10 +431,18 @@ public:
         //(245/276)/385 MB (distributed/allocated)/reserved in VBO Pool. Overhead: 57 percent. Hit rate: 69 percent
         //(187/209)/397 MB (distributed/allocated)/reserved in VBO Pool. Overhead: 112 percent. Hit rate: 76 percent
         U32 block_size = llmax(nhpo2(size) / 8, (U32) 16);
-        size += block_size - (size % block_size);
+        // Round size UP to the next multiple of block_size, but DON'T add a full block
+        // when size is already aligned. The previous "size += block_size - (size %
+        // block_size)" form unconditionally added block_size for aligned inputs, wasting
+        // memory at every bucket boundary.
+        const U32 rem = size % block_size;
+        if (rem != 0)
+        {
+            size += block_size - rem;
+        }
     }
 
-    void allocate(GLenum type, U32 size, GLuint& name, U8*& data) override
+    void allocateVBO(GLenum type, U32 size, GLuint& name, U8*& data) override
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
         llassert(type == GL_ARRAY_BUFFER || type == GL_ELEMENT_ARRAY_BUFFER);
@@ -486,7 +498,7 @@ public:
         clean();
     }
 
-    void free(GLenum type, U32 size, GLuint name, U8* data) override
+    void freeVBO(GLenum type, U32 size, GLuint name, U8* data) override
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
         llassert(type == GL_ARRAY_BUFFER || type == GL_ELEMENT_ARRAY_BUFFER);
@@ -532,7 +544,7 @@ public:
 
         LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
 
-        std::unordered_map<U32, std::list<Entry>>* pools[] = { &mVBOPool, &mIBOPool };
+        boost::unordered_map<U32, std::list<Entry>>* pools[] = { &mVBOPool, &mIBOPool };
 
         using namespace std::chrono_literals;
 
@@ -618,22 +630,22 @@ void LLVertexBufferData::drawWithMatrix()
 
     if (mTexName)
     {
-        gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mTexName);
+        gGL.getTextureSlot(0)->bindManual(ALTextureSlot::TT_TEXTURE, mTexName, mTexSampler);
     }
     else
     {
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
     }
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
     gGL.pushMatrix();
-    gGL.loadMatrix(glm::value_ptr(mModelView));
+    gGL.loadMatrix(mModelView);
     gGL.matrixMode(LLRender::MM_PROJECTION);
     gGL.pushMatrix();
-    gGL.loadMatrix(glm::value_ptr(mProjection));
+    gGL.loadMatrix(mProjection);
     gGL.matrixMode(LLRender::MM_TEXTURE0);
     gGL.pushMatrix();
-    gGL.loadMatrix(glm::value_ptr(mTexture0));
+    gGL.loadMatrix(mTexture0);
 
     mVB->setBuffer();
     mVB->drawArrays(mMode, 0, mCount);
@@ -656,11 +668,11 @@ void LLVertexBufferData::draw()
 
     if (mTexName)
     {
-        gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mTexName);
+        gGL.getTextureSlot(0)->bindManual(ALTextureSlot::TT_TEXTURE, mTexName, mTexSampler);
     }
     else
     {
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
     }
 
     mVB->setBuffer();
@@ -717,7 +729,7 @@ static const std::string vb_type_name[] =
     "TYPE_WEIGHT",
     "TYPE_WEIGHT4",
     "TYPE_CLOTHWEIGHT",
-    "TYPE_JOINT"
+    "TYPE_JOINT",
     "TYPE_TEXTURE_INDEX",
     "TYPE_MAX",
     "TYPE_INDEX",
@@ -732,6 +744,7 @@ const U32 LLVertexBuffer::sGLMode[LLRender::NUM_MODES] =
     GL_LINES,
     GL_LINE_STRIP,
     GL_LINE_LOOP,
+    GL_PATCHES,
 };
 
 //static
@@ -917,6 +930,7 @@ void LLVertexBuffer::clone(LLVertexBuffer& target) const
 void LLVertexBuffer::drawRange(U32 mode, U32 start, U32 end, U32 count, U32 indices_offset) const
 {
     llassert(validateRange(start, end, count, indices_offset));
+    llassert(validate_bound_samplers());
     llassert(mGLBuffer == sGLRenderBuffer);
     llassert(mGLIndices == sGLRenderIndices);
     gGL.syncMatrices();
@@ -942,6 +956,7 @@ void LLVertexBuffer::draw(U32 mode, U32 count, U32 indices_offset) const
 void LLVertexBuffer::drawArrays(U32 mode, U32 first, U32 count) const
 {
     llassert(first + count <= mNumVerts);
+    llassert(validate_bound_samplers());
     llassert(mGLBuffer == sGLRenderBuffer);
     llassert(mGLIndices == sGLRenderIndices);
 
@@ -956,12 +971,14 @@ void LLVertexBuffer::initClass(LLWindow* window)
 {
     llassert(sVBOPool == nullptr);
 
+#if LL_DARWIN || LL_ARM64
     if (gGLManager.mIsApple)
     {
         LL_INFOS() << "VBO Pooling Disabled" << LL_ENDL;
         sVBOPool = new LLAppleVBOPool();
     }
     else
+#endif
     {
         LL_INFOS() << "VBO Pooling Enabled" << LL_ENDL;
         sVBOPool = new LLDefaultVBOPool();
@@ -1118,7 +1135,7 @@ void LLVertexBuffer::genBuffer(U32 size)
         llassert(mMappedData == nullptr);
 
         mSize = size;
-        sVBOPool->allocate(GL_ARRAY_BUFFER, mSize, mGLBuffer, mMappedData);
+        sVBOPool->allocateVBO(GL_ARRAY_BUFFER, mSize, mGLBuffer, mMappedData);
     }
 }
 
@@ -1133,7 +1150,7 @@ void LLVertexBuffer::genIndices(U32 size)
         llassert(mGLIndices == 0);
         llassert(mMappedIndexData == nullptr);
         mIndicesSize = size;
-        sVBOPool->allocate(GL_ELEMENT_ARRAY_BUFFER, mIndicesSize, mGLIndices, mMappedIndexData);
+        sVBOPool->allocateVBO(GL_ELEMENT_ARRAY_BUFFER, mIndicesSize, mGLIndices, mMappedIndexData);
     }
 }
 
@@ -1191,7 +1208,7 @@ void LLVertexBuffer::destroyGLBuffer()
         //llassert(sVBOPool);
         if (sVBOPool)
         {
-            sVBOPool->free(GL_ARRAY_BUFFER, mSize, mGLBuffer, mMappedData);
+            sVBOPool->freeVBO(GL_ARRAY_BUFFER, mSize, mGLBuffer, mMappedData);
         }
 
         mSize = 0;
@@ -1208,7 +1225,7 @@ void LLVertexBuffer::destroyGLIndices()
         //llassert(sVBOPool);
         if (sVBOPool)
         {
-            sVBOPool->free(GL_ELEMENT_ARRAY_BUFFER, mIndicesSize, mGLIndices, mMappedIndexData);
+            sVBOPool->freeVBO(GL_ELEMENT_ARRAY_BUFFER, mIndicesSize, mGLIndices, mMappedIndexData);
         }
 
         mIndicesSize = 0;
@@ -1299,7 +1316,12 @@ U8* LLVertexBuffer::mapVertexBuffer(LLVertexBuffer::AttributeType type, U32 inde
         count = mNumVerts - index;
     }
 
+#if LL_DARWIN || LL_ARM64
+    // Region tracking not needed on apple silicon - it recreates entire buffer
+    // While mIsApple can be encountered under windows, this is a
+    // macOS OpenGL behavior workaround. LL_ARM64 check might be not needed
     if (!gGLManager.mIsApple)
+#endif
     {
         U32 start = mOffsets[type] + sTypeSize[type] * index;
         U32 end = start + sTypeSize[type] * count-1;
@@ -1336,7 +1358,9 @@ U8* LLVertexBuffer::mapIndexBuffer(U32 index, S32 count)
         count = mNumIndices-index;
     }
 
+#if LL_DARWIN || LL_ARM64
     if (!gGLManager.mIsApple)
+#endif
     {
         U32 start = sizeof(U16) * index;
         U32 end = start + sizeof(U16) * count-1;
@@ -1371,6 +1395,13 @@ U8* LLVertexBuffer::mapIndexBuffer(U32 index, S32 count)
 //  dst -- mMappedData or mMappedIndexData
 void LLVertexBuffer::flush_vbo(GLenum target, U32 start, U32 end, void* data, U8* dst)
 {
+    // Callers compute end = start + size - 1; when size == 0 this underflows to
+    // (start - 1), which then passes the "end != 0" test below and issues a
+    // glBufferSubData with a nonsense size.
+    if (end + 1 == start)
+        return;
+
+#if LL_DARWIN || LL_ARM64
     if (gGLManager.mIsApple)
     {
         // on OS X, flush_vbo doesn't actually write to the GL buffer, so be sure to call
@@ -1382,6 +1413,7 @@ void LLVertexBuffer::flush_vbo(GLenum target, U32 start, U32 end, void* data, U8
         memcpy(dst+start, data, end-start+1);
     }
     else
+#endif
     {
         llassert(target == GL_ARRAY_BUFFER ? sGLRenderBuffer == mGLBuffer : sGLRenderIndices == mGLIndices);
 
@@ -1393,16 +1425,10 @@ void LLVertexBuffer::flush_vbo(GLenum target, U32 start, U32 end, void* data, U8
             LL_PROFILE_ZONE_NUM(end);
             LL_PROFILE_ZONE_NUM(end-start);
 
-            constexpr U32 block_size = 65536;
-
-            for (U32 i = start; i <= end; i += block_size)
-            {
-                //LL_PROFILE_ZONE_NAMED_CATEGORY_VERTEX("glBufferSubData block");
-                //LL_PROFILE_GPU_ZONE("glBufferSubData");
-                U32 tend = llmin(i + block_size, end);
-                U32 size = tend - i + 1;
-                glBufferSubData(target, i, size, (U8*) data + (i-start));
-            }
+            // Issue a single glBufferSubData; modern drivers handle internal
+            // chunking better than user-space loops, and the chunked loop is
+            // a relic that fragments DMA scheduling.
+            glBufferSubData(target, start, end - start + 1, data);
         }
     }
 }
@@ -1437,6 +1463,7 @@ void LLVertexBuffer::_unmapBuffer()
         }
     };
 
+#if LL_DARWIN || LL_ARM64
     if (gGLManager.mIsApple)
     {
         STOP_GLERROR;
@@ -1479,6 +1506,7 @@ void LLVertexBuffer::_unmapBuffer()
         STOP_GLERROR;
     }
     else
+#endif // LL_DARWIN || LL_ARM64
     {
         if (!mMappedVertexRegions.empty())
         {

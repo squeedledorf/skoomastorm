@@ -61,7 +61,6 @@
 #include "llaudioengine.h" // <FS:PP> For object deletion sound
 #include "llviewerwindow.h"
 #include "lldrawable.h"
-#include "llfloatergltfasseteditor.h"
 #include "llfloaterinspect.h"
 #include "llfloaterproperties.h" // <FS:Ansariel> Keep legacy properties floater
 #include "llfloaterreporter.h"
@@ -479,7 +478,7 @@ void LLSelectMgr::overrideAvatarUpdates()
 //-----------------------------------------------------------------------------
 // Select just the object, not any other group members.
 //-----------------------------------------------------------------------------
-LLObjectSelectionHandle LLSelectMgr::selectObjectOnly(LLViewerObject* object, S32 face, S32 gltf_node, S32 gltf_primitive)
+LLObjectSelectionHandle LLSelectMgr::selectObjectOnly(LLViewerObject* object, S32 face)
 {
     llassert( object );
 
@@ -490,11 +489,6 @@ LLObjectSelectionHandle LLSelectMgr::selectObjectOnly(LLViewerObject* object, S3
     if (object->isSelected() ) {
         // make sure point at position is updated
         updatePointAt();
-        LLSelectNode* nodep = mSelectedObjects->findNode(object);
-        if (nodep)
-        {
-            nodep->selectGLTFNode(gltf_node, gltf_primitive, true);
-        }
         gEditMenuHandler = this;
         return NULL;
     }
@@ -509,7 +503,7 @@ LLObjectSelectionHandle LLSelectMgr::selectObjectOnly(LLViewerObject* object, S3
 
     // Place it in the list and tag it.
     // This will refresh dialogs.
-    addAsIndividual(object, face, true, gltf_node, gltf_primitive);
+    addAsIndividual(object, face, true);
 
     // Stop the object from moving (this anticipates changes on the
     // simulator in LLTask::userSelect)
@@ -1131,7 +1125,7 @@ void LLSelectMgr::addAsFamily(std::vector<LLViewerObject*>& objects, bool add_to
 //-----------------------------------------------------------------------------
 // addAsIndividual() - a single object, face, etc
 //-----------------------------------------------------------------------------
-void LLSelectMgr::addAsIndividual(LLViewerObject *objectp, S32 face, bool undoable, S32 gltf_node, S32 gltf_primitive)
+void LLSelectMgr::addAsIndividual(LLViewerObject *objectp, S32 face, bool undoable)
 {
     // check to see if object is already in list
     LLSelectNode *nodep = mSelectedObjects->findNode(objectp);
@@ -1180,13 +1174,6 @@ void LLSelectMgr::addAsIndividual(LLViewerObject *objectp, S32 face, bool undoab
     {
         LL_ERRS() << "LLSelectMgr::add face " << face << " out-of-range" << LL_ENDL;
         return;
-    }
-
-    // Handle glTF node selection
-    if (gltf_node >= 0)
-    {
-        nodep->selectGLTFNode(gltf_node, gltf_primitive, true);
-
     }
 
     saveSelectedObjectTransform(SELECT_ACTION_TYPE_PICK);
@@ -1559,7 +1546,7 @@ void LLSelectMgr::getGrid(LLVector3& origin, LLQuaternion &rotation, LLVector3 &
             LLDrawable* drawable = first_grid_object->mDrawable;
             if (drawable && drawable->isActive())
             {
-                mGridOrigin = mGridOrigin * first_grid_object->getRenderMatrix();
+                mGridOrigin = mGridOrigin * first_grid_object->getRenderMatrix().toMatrix4();
             }
             mGridScale.set(size.getF32ptr());
         }
@@ -5742,14 +5729,6 @@ void LLSelectMgr::saveSelectedObjectTransform(EActionType action_type)
                 return true; // skip
             }
 
-            if (selectNode->mSelectedGLTFNode != -1)
-            {
-                // save GLTF node state
-                object->getGLTFNodeTransformAgent(selectNode->mSelectedGLTFNode, &selectNode->mSavedPositionLocal, &selectNode->mSavedRotation, &selectNode->mSavedScale);
-                selectNode->mSavedPositionGlobal = gAgent.getPosGlobalFromAgent(selectNode->mSavedPositionLocal);
-                selectNode->mLastMoveLocal.setZero();
-            }
-            else
             {
                 selectNode->mSavedPositionLocal = object->getPosition();
                 if (object->isAttachment())
@@ -6711,8 +6690,6 @@ void LLSelectMgr::processForceObjectSelect(LLMessageSystem* msg, void**)
     LLSelectMgr::getInstance()->highlightObjectAndFamily(objects);
 }
 
-extern F32  gGLModelView[16];
-
 void LLSelectMgr::updateSilhouettes()
 {
     S32 num_sils_genned = 0;
@@ -6996,7 +6973,7 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
         return;
     }
 
-    gGL.getTexUnit(0)->bind(mSilhouetteImagep);
+    gGL.getTextureSlot(0)->bindSampled(mSilhouetteImagep, ALSamplers::AnisoWrap);
     LLGLSPipelineSelection gls_select;
     LLGLEnable blend(GL_BLEND);
     LLGLDepthTest gls_depth(GL_TRUE, GL_FALSE);
@@ -7053,7 +7030,7 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
         if (!is_hud_object)
         {
             gGL.loadIdentity();
-            gGL.multMatrix(gGLModelView);
+            gGL.multMatrix(LLViewerCamera::getCurrent().getModelview());
         }
 
         if (objectp->mDrawable->isActive())
@@ -7247,7 +7224,7 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
         stop_glerror();
     }
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 }
 
 void LLSelectMgr::generateSilhouette(LLSelectNode* nodep, const LLVector3& view_point)
@@ -7382,17 +7359,6 @@ void LLSelectNode::selectTE(S32 te_index, bool selected)
         mTESelectMask &= ~mask;
     }
     mLastTESelected = te_index;
-}
-
-void LLSelectNode::selectGLTFNode(S32 node_index, S32 primitive_index, bool selected)
-{
-    if (node_index < 0)
-    {
-        return;
-    }
-
-    mSelectedGLTFNode = node_index;
-    mSelectedGLTFPrimitive = primitive_index;
 }
 
 bool LLSelectNode::isTESelected(S32 te_index) const
@@ -7736,7 +7702,7 @@ void LLSelectNode::renderOneSilhouette(const LLColor4 &color)
     if (!is_hud_object)
     {
         gGL.loadIdentity();
-        gGL.multMatrix(gGLModelView);
+        gGL.multMatrix(LLViewerCamera::getCurrent().getModelview());
     }
 
 
@@ -7898,12 +7864,6 @@ void dialog_refresh_all()
     if (panel_task_info)
     {
         panel_task_info->dirty();
-    }
-
-    LLFloaterGLTFAssetEditor * gltf_editor = LLFloaterReg::findTypedInstance<LLFloaterGLTFAssetEditor>("gltf_asset_editor");
-    if (gltf_editor)
-    {
-        gltf_editor->dirty();
     }
 }
 

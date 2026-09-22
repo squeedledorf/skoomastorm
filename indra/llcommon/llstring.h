@@ -424,6 +424,19 @@ public:
     // Win32, and falls back to a non-locale aware comparison on
     // Linux.
     static S32      compareInsensitive(const T* lhs, const T* rhs);
+    // SKOOMA-PORT: from Alchemy. ASCII-only case folding; any other byte must match exactly.
+    static bool     isEqualInsensitiveASCII(std::basic_string_view<T> lhs, std::basic_string_view<T> rhs)
+    {
+        if (lhs.size() != rhs.size()) return false;
+        for (size_t i = 0; i < lhs.size(); ++i)
+        {
+            T a = lhs[i], b = rhs[i];
+            if (a >= 'A' && a <= 'Z') { a = (T)(a - 'A' + 'a'); }
+            if (b >= 'A' && b <= 'Z') { b = (T)(b - 'A' + 'a'); }
+            if (a != b) return false;
+        }
+        return true;
+    }
     static S32      compareInsensitive(const string_type& lhs, const string_type& rhs);
 
     // Case sensitive comparison with good handling of numbers.  Does not use current locale.

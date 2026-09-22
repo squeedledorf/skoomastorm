@@ -111,8 +111,8 @@ public:
     }
 
     Type*   get() const                         { return mPointer; }
-    const Type* operator->() const              { return mPointer; }
-    Type*   operator->()                        { return mPointer; }
+    // SKOOMA-PORT: shallow const, as in Alchemy and std::shared_ptr; matches get() and the Type* conversion.
+    Type*   operator->() const                  { return mPointer; }
     const Type& operator*() const               { return *mPointer; }
     Type&   operator*()                         { return *mPointer; }
 
@@ -304,4 +304,11 @@ namespace std
         }
     };
 }
+// SKOOMA-PORT: boost::container_hash support for LLPointer keys, as in Alchemy
+template<class Type>
+inline size_t hash_value(LLPointer<Type> const& s) noexcept
+{
+    return std::hash<Type*>()(s.get());
+}
+
 #endif

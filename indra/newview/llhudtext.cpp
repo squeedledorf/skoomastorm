@@ -147,9 +147,6 @@ void LLHUDText::renderText()
     {
         return;
     }
-
-    gGL.getTexUnit(0)->enable(LLTexUnit::TT_TEXTURE);
-
     LLGLState gls_blend(GL_BLEND, true);
 
     LLColor4 shadow_color(0.f, 0.f, 0.f, 1.f);

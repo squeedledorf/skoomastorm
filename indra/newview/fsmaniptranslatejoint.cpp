@@ -134,8 +134,12 @@ void FSManipTranslateJoint::restoreGL()
 
     GLuint* d = new GLuint[rez * rez];
 
-    gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, sGridTex->getTexName(), true);
-    gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_TRILINEAR);
+    gGL.getTextureSlot(0)->bindManual(ALTextureSlot::TT_TEXTURE, sGridTex->getTexName(),
+                                  gGL.getSampler(ALSamplers::TrilinearWrap));
+
+    // SKOOMA-PORT: immutable storage, so allocate the whole mip chain before the level uploads below.
+    LLImageGL::allocateTexture2D(GL_TEXTURE_2D, GL_RGBA8, rez, rez, GL_RGBA, GL_UNSIGNED_BYTE,
+                                 nullptr, LLImageGL::calcMipLevelCount(rez, rez));
 
     while (rez >= 1)
     {
@@ -228,7 +232,7 @@ void FSManipTranslateJoint::restoreGL()
                 }
             }
         }
-        LLImageGL::setManualImage(GL_TEXTURE_2D, mip, GL_RGBA, rez, rez, GL_RGBA, GL_UNSIGNED_BYTE, d);
+        LLImageGL::setManualSubImage(GL_TEXTURE_2D, mip, rez, rez, GL_RGBA, GL_UNSIGNED_BYTE, d);
         rez = rez >> 1;
         mip++;
     }
@@ -502,8 +506,8 @@ void FSManipTranslateJoint::highlightManipulators(S32 x, S32 y)
     if (!isAvatarJointSafeToUse())
         return;
 
-    LLMatrix4 projMatrix = LLViewerCamera::getInstance()->getProjection();
-    LLMatrix4 modelView = LLViewerCamera::getInstance()->getModelview();
+    LLMatrix4 projMatrix = LLViewerCamera::getInstance()->getForwardZProjection().toMatrix4();
+    LLMatrix4 modelView = LLViewerCamera::getInstance()->frameModelview().toMatrix4();
 
     LLVector3 object_position = mJoint->getWorldPosition();
 
@@ -825,7 +829,7 @@ void FSManipTranslateJoint::renderTranslationHandles()
         relative_camera_dir.normVec();
 
         {
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTextureSlot(0)->unbind();
             LLGLDisable cull_face(GL_CULL_FACE);
 
             LLColor4 color1;
@@ -1035,7 +1039,7 @@ void FSManipTranslateJoint::renderTranslationHandles()
             }
         }
         {
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTextureSlot(0)->unbind();
 
             // Since we draw handles with depth testing off, we need to draw them in the
             // proper depth order.
@@ -1101,7 +1105,7 @@ void FSManipTranslateJoint::renderTranslationHandles()
 
 void FSManipTranslateJoint::renderArrow(S32 which_arrow, S32 selected_arrow, F32 box_size, F32 arrow_size, F32 handle_size, bool reverse_direction)
 {
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
     LLGLEnable gls_blend(GL_BLEND);
 
     for (S32 pass = 1; pass <= 2; pass++)

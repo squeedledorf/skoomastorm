@@ -15824,4 +15824,20 @@ Folder names cannot contain / or \.
   </notification>
   <!-- </FS:Amy> Favorite Wearables folders -->
 
+  <!-- <AL> Lightbox -->
+  <notification
+    icon="notifytip.tga"
+    name="LightBoxWhiteBalanceTooDark"
+    type="notifytip">
+That spot is too dark to read a colour from. Pick something well lit that should look white or grey.
+  </notification>
+
+  <notification
+    icon="notifytip.tga"
+    name="LightBoxWhiteBalanceUnreachable"
+    type="notifytip">
+Temperature and tint cannot neutralise that. It looks like a coloured surface rather than a neutral one under coloured light.
+  </notification>
+  <!-- </AL> -->
+
 </notifications>

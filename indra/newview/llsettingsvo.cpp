@@ -366,7 +366,7 @@ bool LLSettingsVOBase::exportFile(const LLSettingsBase::ptr_t &settings, const s
 {
     try
     {
-        std::ofstream file(filename, std::ios::out | std::ios::trunc);
+        llofstream file(filename, std::ios::out | std::ios::trunc);
         file.exceptions(std::ios_base::failbit | std::ios_base::badbit);
 
         if (!file)
@@ -392,7 +392,7 @@ LLSettingsBase::ptr_t LLSettingsVOBase::importFile(const std::string &filename)
 
     try
     {
-        std::ifstream file(filename, std::ios::in);
+        llifstream file(filename, std::ios::in);
         file.exceptions(std::ios_base::failbit | std::ios_base::badbit);
 
         if (!file)
@@ -829,13 +829,14 @@ void LLSettingsVOSky::applySpecial(void *ptarget, bool force)
 
     shader->uniform1f(LLShaderMgr::SKY_SUNLIGHT_SCALE, hdr ? sunlight_hdr_scale : sunlight_scale);
     shader->uniform1f(LLShaderMgr::SKY_AMBIENT_SCALE, ambient_scale);
-    shader->uniform1i(LLShaderMgr::CLASSIC_MODE, classic_mode);
-
+    // classic_mode is a compile-time program variant now; sClassicMode is what selectVariant()
+    // reads to pick the CLASSIC_MODE=1 clone.
     LLRender::sClassicMode = classic_mode;
 
     F32 probe_ambiance = getReflectionProbeAmbiance();
 
-    if (irradiance_pass)
+    static LLCachedControl<bool> desaturate_irradiance(gSavedSettings, "RenderDesaturateIrradiance", true);
+    if (irradiance_pass && desaturate_irradiance)
     { // during an irradiance map update, disable ambient lighting (direct lighting only) and desaturate sky color (avoid tinting the world blue)
         shader->uniform3fv(LLShaderMgr::AMBIENT, LLVector3::zero.mV);
     }
@@ -903,7 +904,7 @@ void LLSettingsVOSky::applySpecial(void *ptarget, bool force)
     shader->uniform1f(LLShaderMgr::GAMMA, g);
 }
 
-LLSettingsSky::parammapping_t LLSettingsVOSky::getParameterMap() const
+const LLSettingsSky::parammapping_t& LLSettingsVOSky::getParameterMap() const
 {
     static parammapping_t param_map;
 
@@ -1117,43 +1118,32 @@ void LLSettingsVOWater::applySpecial(void *ptarget, bool force)
         }
 
         //transform water plane to eye space
-        glm::vec3 norm(0.f, 0.f, 1.f);
-        glm::vec3 p(0.f, 0.f, water_height);
+        const LLMatrix4a& mat = LLViewerCamera::getCurrent().getModelview();
+        LLMatrix4a normal_mat;
+        normal_mat.setNormalMatrix(mat);
 
-        glm::mat4 mat = get_current_modelview();
-        glm::mat4 invtrans = glm::transpose(glm::inverse(mat));
-        invtrans[0][3] = invtrans[1][3] = invtrans[2][3] = 0.f;
+        // a plane by a point on it and its normal, carried into eye space
+        auto eye_plane = [&](const LLVector4a& norm, const LLVector4a& p)
+        {
+            LLVector4a enorm, ep;
+            normal_mat.rotate(norm, enorm);
+            enorm.normalize3();
+            mat.affineTransform(p, ep);
+            return LLVector4(enorm[0], enorm[1], enorm[2], -ep.dot3(enorm).getF32());
+        };
 
-        glm::vec3 enorm;
-        glm::vec3 ep;
-        enorm = mul_mat4_vec3(invtrans, norm);
-        enorm = glm::normalize(enorm);
-        ep = mul_mat4_vec3(mat, p);
+        const LLVector4 waterPlane = eye_plane(LLVector4a(0.f, 0.f, 1.f, 0.f), LLVector4a(0.f, 0.f, water_height, 1.f));
 
-        LLVector4 waterPlane(enorm.x, enorm.y, enorm.z, -glm::dot(ep, enorm));
-
-        norm = glm::vec3(gPipeline.mHeroProbeManager.mMirrorNormal);
-        p    = glm::vec3(gPipeline.mHeroProbeManager.mMirrorPosition);
-        enorm = mul_mat4_vec3(invtrans, norm);
-        enorm = glm::normalize(enorm);
-        ep = mul_mat4_vec3(mat, p);
-
-        glm::vec4 mirrorPlane(enorm, -glm::dot(ep, enorm));
+        const LLVector3& mirror_normal = gPipeline.mHeroProbeManager.mMirrorNormal;
+        const LLVector3& mirror_position = gPipeline.mHeroProbeManager.mMirrorPosition;
+        const LLVector4 mirrorPlane = eye_plane(LLVector4a(mirror_normal.mV[0], mirror_normal.mV[1], mirror_normal.mV[2], 0.f),
+                                                LLVector4a(mirror_position.mV[0], mirror_position.mV[1], mirror_position.mV[2], 1.f));
 
         LLDrawPoolAlpha::sWaterPlane = waterPlane;
 
         shader->uniform4fv(LLShaderMgr::WATER_WATERPLANE, waterPlane.mV);
-        shader->uniform4fv(LLShaderMgr::CLIP_PLANE, glm::value_ptr(mirrorPlane));
+        shader->uniform4fv(LLShaderMgr::CLIP_PLANE, mirrorPlane.mV);
         LLVector4 light_direction = env.getClampedLightNorm();
-
-        if (gPipeline.mHeroProbeManager.isMirrorPass())
-        {
-            shader->uniform1f(LLShaderMgr::MIRROR_FLAG, 1);
-        }
-        else
-        {
-            shader->uniform1f(LLShaderMgr::MIRROR_FLAG, 0);
-        }
 
         F32 waterFogKS = 1.f / llmax(light_direction.mV[2], WATER_FOG_LIGHT_CLAMP);
 
@@ -1193,7 +1183,7 @@ void LLSettingsVOWater::updateSettings()
     }
 }
 
-LLSettingsWater::parammapping_t LLSettingsVOWater::getParameterMap() const
+const LLSettingsWater::parammapping_t& LLSettingsVOWater::getParameterMap() const
 {
     static parammapping_t param_map;
 

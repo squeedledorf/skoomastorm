@@ -41,6 +41,7 @@
 #include "httpheaders.h"
 #include "httphandler.h"
 #include "lltrace.h"
+#include "llmetricperformancetester.h"
 #include "llviewertexture.h"
 
 class LLViewerTexture;

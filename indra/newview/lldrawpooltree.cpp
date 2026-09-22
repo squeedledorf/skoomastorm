@@ -47,7 +47,6 @@ LLDrawPoolTree::LLDrawPoolTree(LLViewerTexture *texturep) :
     LLFacePool(POOL_TREE),
     mTexturep(texturep)
 {
-    mTexturep->setAddressMode(LLTexUnit::TAM_WRAP);
 }
 
 //============================================
@@ -55,9 +54,9 @@ LLDrawPoolTree::LLDrawPoolTree(LLViewerTexture *texturep) :
 //============================================
 void LLDrawPoolTree::beginDeferredPass(S32 pass)
 {
-    LL_RECORD_BLOCK_TIME(FTM_RENDER_TREES);
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
 
-    shader = &gDeferredTreeProgram;
+    shader = gDeferredTreeProgram.selectVariant();
     shader->bind();
     shader->setMinimumAlpha(0.5f);
 }
@@ -71,14 +70,18 @@ void LLDrawPoolTree::renderDeferred(S32 pass)
         return;
     }
 
+    // Decode on the sampler; the store re-encodes via the deferred pass's hoisted
+    // GL_FRAMEBUFFER_SRGB (renderGeomDeferred), so the tree writer shades in linear.
+    //
+    // renderShadow() calls this function too, with the shadow program bound. The decode is
+    // inert there: the shadow shader only alpha-tests, which sRGB decode never touches, and
+    // a shadow target has no colour attachment for FRAMEBUFFER_SRGB to act on anyway.
 
 // [SL:KB] - Patch: Render-TextureToggle (Catznip-4.0)
-    if( (LLPipeline::sRenderTextures) )
-        gGL.getTexUnit(sDiffTex)->bindFast( mTexturep );
-    else
-        gGL.getTexUnit(sDiffTex)->bindFast( LLViewerFetchedTexture::sDefaultDiffuseImagep );
+    LLViewerTexture* pTexture = (LLPipeline::sRenderTextures) ? mTexturep.get() : LLViewerFetchedTexture::sDefaultDiffuseImagep.get();
+    gGL.getTextureSlot(sDiffTex)->bindFast(pTexture, ALSamplers::AnisoWrapSRGB);
 // [/SL:KB]
-//    gGL.getTexUnit(sDiffTex)->bindFast(mTexturep);
+//  gGL.getTextureSlot(sDiffTex)->bindFast(mTexturep, ALSamplers::AnisoWrap);
     mTexturep->addTextureStats(1024.f * 1024.f); // <=== keep Linden tree textures at full res
 
     for (std::vector<LLFace*>::iterator iter = mDrawFace.begin();
@@ -89,7 +92,7 @@ void LLDrawPoolTree::renderDeferred(S32 pass)
 
         if (buff)
         {
-            LLMatrix4* model_matrix = &(face->getDrawable()->getRegion()->mRenderMatrix);
+            LLMatrix4a* model_matrix = &(face->getDrawable()->getRegion()->mRenderMatrix);
 
             llassert(gGL.getMatrixMode() == LLRender::MM_MODELVIEW);
             LLRenderPass::applyModelMatrix(model_matrix);
@@ -102,7 +105,7 @@ void LLDrawPoolTree::renderDeferred(S32 pass)
 
 void LLDrawPoolTree::endDeferredPass(S32 pass)
 {
-    LL_RECORD_BLOCK_TIME(FTM_RENDER_TREES);
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
 
     shader->unbind();
 }
@@ -116,7 +119,7 @@ void LLDrawPoolTree::beginShadowPass(S32 pass)
 
     static LLCachedControl<F32> shadow_offset(gSavedSettings, "RenderDeferredTreeShadowOffset");
     static LLCachedControl<F32> shadow_bias(gSavedSettings, "RenderDeferredTreeShadowBias");
-    glPolygonOffset(shadow_offset(), shadow_bias());
+    gGL.setPolygonOffset(shadow_offset(), shadow_bias());
 
     LLEnvironment& environment = LLEnvironment::instance();
 
@@ -135,13 +138,10 @@ void LLDrawPoolTree::endShadowPass(S32 pass)
     LL_PROFILE_ZONE_SCOPED;
 
     // <FS:PP> Attempt to speed up things a little
-    // glPolygonOffset(gSavedSettings.getF32("RenderDeferredSpotShadowOffset"),
-    //                  gSavedSettings.getF32("RenderDeferredSpotShadowBias"));
     static LLCachedControl<F32> RenderDeferredSpotShadowOffset(gSavedSettings, "RenderDeferredSpotShadowOffset");
     static LLCachedControl<F32> RenderDeferredSpotShadowBias(gSavedSettings, "RenderDeferredSpotShadowBias");
-    glPolygonOffset(RenderDeferredSpotShadowOffset, RenderDeferredSpotShadowBias);
+    gGL.setPolygonOffset(RenderDeferredSpotShadowOffset, RenderDeferredSpotShadowBias);
     // </FS:PP>
-
     gDeferredTreeShadowProgram.unbind();
 }
 

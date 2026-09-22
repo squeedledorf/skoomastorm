@@ -2600,7 +2600,8 @@ bool LLAgent::needsRenderHead()
         return mShowAvatar;
     }
 // [RLVa:KB] - Checked: RLVa-2.0.2
-    return ((LLVOAvatar::sVisibleInFirstPerson && LLPipeline::sReflectionRender) || (mShowAvatar && !gAgentCamera.cameraMouselook())) && (!gRlvHandler.hasBehaviour(RLV_BHVR_SHOWSELFHEAD));
+    // SKOOMA-PORT: LLPipeline::sReflectionRender is gone; it was only ever set outside deferred, so that term was always false.
+    return (mShowAvatar && !gAgentCamera.cameraMouselook()) && (!gRlvHandler.hasBehaviour(RLV_BHVR_SHOWSELFHEAD));
 // [/RLVa:KB]
 //  return (LLVOAvatar::sVisibleInFirstPerson && LLPipeline::sReflectionRender) || (mShowAvatar && !gAgentCamera.cameraMouselook());
 }
@@ -6110,7 +6111,7 @@ void LLAgent::renderAutoPilotTarget()
         gGL.pushMatrix();
 
         // not textured
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
 
         // lovely green
         gGL.color4f(0.f, 1.f, 1.f, 1.f);

@@ -9,6 +9,9 @@
  save_rect="true"
  title="Save Graphic Preset"
  width="245">
+    <string name="title_graphic">Save Graphic Preset</string>
+    <string name="title_camera">Save Camera Preset</string>
+    <string name="title_looks">Save Look</string>
 
     <text
      follows="top|left|right"

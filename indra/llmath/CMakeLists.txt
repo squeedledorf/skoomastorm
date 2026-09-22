@@ -9,6 +9,9 @@ include(Boost)
 include(SSE2NEON)
 
 set(llmath_SOURCE_FILES
+    alplaneset.cpp
+    alprojection.cpp
+    alsimdkernels.cpp
     llbbox.cpp
     llbboxlocal.cpp
     llcalc.cpp
@@ -44,6 +47,10 @@ set(llmath_SOURCE_FILES
     )
 
 set(llmath_HEADER_FILES
+    alplaneset.h
+    alprojection.h
+    alsimdkernels.h
+    alsimdkernels.inl
     CMakeLists.txt
 
     camera.h

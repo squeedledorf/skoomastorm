@@ -265,7 +265,7 @@ void LLHUDEffectBeam::render()
     }
 
     LLGLSPipelineAlpha gls_pipeline_alpha;
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
 
     // Interpolate the global fade alpha

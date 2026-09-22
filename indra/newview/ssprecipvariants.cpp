@@ -32,6 +32,7 @@
 #include "llrendertarget.h"
 #include "llviewershadermgr.h"
 #include "llviewertexture.h"
+#include "ssglmcompat.h"
 
 // Additive alpha splat into an RGBA texel, clamped.
 static inline void splatAlpha(U8* data, S32 res, S32 x, S32 y, F32 a)
@@ -273,7 +274,7 @@ LLPointer<LLViewerTexture> SSPrecipVariants::bakeFromCustom(const SSPrecipPreset
     gGL.loadIdentity();
 
     gUIProgram.bind();
-    gGL.getTexUnit(0)->bind(custom_drop);
+    gGL.getTextureSlot(0)->bindSampled(custom_drop, ALSamplers::AnisoWrap);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
     gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA,
                   LLRender::BF_ONE, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);

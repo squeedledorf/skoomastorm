@@ -353,18 +353,6 @@ public:
     virtual const LLVector3 &getPositionAgent() const;
     virtual const LLVector3 getRenderPosition() const;
 
-    LLMatrix4a getAgentToGLTFAssetTransform() const;
-    LLMatrix4a getGLTFAssetToAgentTransform() const;
-    LLVector3 getGLTFNodePositionAgent(S32 node_index) const;
-    LLMatrix4a getGLTFNodeTransformAgent(S32 node_index) const;
-    void getGLTFNodeTransformAgent(S32 node_index, LLVector3* position, LLQuaternion* rotation, LLVector3* scale) const;
-
-    // move the node at the given index by the given offset in agent space
-    void moveGLTFNode(S32 node_index, const LLVector3& offset);
-
-    // set the rotation in agent space of the given node
-    void setGLTFNodeRotationAgent(S32 node_index, const LLQuaternion& rotation);
-
     virtual const LLVector3 getPivotPositionAgent() const; // Usually = to getPositionAgent, unless like flex objects it's not
 
     LLViewerObject* getRootEdit() const;
@@ -372,7 +360,7 @@ public:
     const LLQuaternion getRotationRegion() const;
     const LLQuaternion getRotationEdit() const;
     const LLQuaternion getRenderRotation() const;
-    virtual const LLMatrix4 getRenderMatrix() const;
+    virtual const LLMatrix4a& getRenderMatrix() const; // SKOOMA-PORT: LLMatrix4a, as Alchemy
 
     void setPosition(const LLVector3 &pos, bool damped = false);
     void setPositionGlobal(const LLVector3d &position, bool damped = false);
@@ -382,7 +370,7 @@ public:
     void setPositionParent(const LLVector3 &pos_parent, bool damped = false);
     void setPositionAbsoluteGlobal( const LLVector3d &pos_global, bool damped = false );
 
-    virtual const LLMatrix4& getWorldMatrix(LLXformMatrix* xform) const     { return xform->getWorldMatrix(); }
+    virtual const LLMatrix4a& getWorldMatrix(LLXformMatrix* xform) const    { return xform->getWorldMatrix(); } // SKOOMA-PORT: LLMatrix4a, as Alchemy
 
     inline void setRotation(const F32 x, const F32 y, const F32 z, bool damped = false);
     inline void setRotation(const LLQuaternion& quat, bool damped = false);
@@ -864,15 +852,6 @@ public:
     F32             mPhysicsFriction;
     F32             mPhysicsDensity;
     F32             mPhysicsRestitution;
-
-    // set the GLTF asset for this LLViewerObject  to the specified asset id
-    // id MUST be for a GLTF asset (LLAssetType::AT_GLTF)
-    // will relesae any currently held references to a GLTF asset on id change
-    void setGLTFAsset(const LLUUID& id);
-
-    // Associated GLTF Asset
-    std::shared_ptr<LL::GLTF::Asset> mGLTFAsset;
-    bool mIsGLTFAssetMissing = false;
 
     // Pipeline classes
     LLPointer<LLDrawable> mDrawable;

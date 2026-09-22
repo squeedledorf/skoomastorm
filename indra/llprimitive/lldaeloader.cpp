@@ -53,8 +53,7 @@
 #include "llsdserialize.h"
 #include "lljoint.h"
 
-#include "glm/mat4x4.hpp"
-#include "glm/gtc/type_ptr.hpp"
+#include "llmatrix4a.h"
 #include "llmatrix4a.h"
 
 #include <boost/regex.hpp>
@@ -1057,8 +1056,12 @@ bool LLDAELoader::OpenFile(const std::string& filename)
     bool result = false;
     for (U32 i = 0; i < controllerCount; ++i)
     {
-        domController* pController = NULL;
-        db->getElement( (daeElement**) &pController, i , NULL, "controller" );
+        // getElement writes to a daeElement**; downcasting via (daeElement**)
+        // &pController aliases a domController* slot through a daeElement**
+        // (strict-aliasing UB). Use a real daeElement* slot and downcast.
+        daeElement* pElem = nullptr;
+        db->getElement( &pElem, i , NULL, "controller" );
+        domController* pController = daeSafeCast<domController>(pElem);
         result = verifyController( pController );
         if (!result)
         {
@@ -1114,8 +1117,10 @@ bool LLDAELoader::OpenFile(const std::string& filename)
     U32 submodel_limit = count > 0 ? mGeneratedModelLimit/count : 0;
     for (daeInt idx = 0; idx < count; ++idx)
     { //build map of domEntities to LLModel
-        domMesh* mesh = NULL;
-        db->getElement((daeElement**) &mesh, idx, NULL, COLLADA_TYPE_MESH);
+        // See note in the controller loop above -- alias-clean downcast.
+        daeElement* pElem = nullptr;
+        db->getElement(&pElem, idx, NULL, COLLADA_TYPE_MESH);
+        domMesh* mesh = daeSafeCast<domMesh>(pElem);
 
         if (mesh)
         {
@@ -1174,8 +1179,9 @@ bool LLDAELoader::OpenFile(const std::string& filename)
     count = db->getElementCount(NULL, COLLADA_TYPE_SKIN);
     for (daeInt idx = 0; idx < count; ++idx)
     { //add skinned meshes as instances
-        domSkin* skin = NULL;
-        db->getElement((daeElement**) &skin, idx, NULL, COLLADA_TYPE_SKIN);
+        daeElement* pElem = nullptr;
+        db->getElement(&pElem, idx, NULL, COLLADA_TYPE_SKIN);
+        domSkin* skin = daeSafeCast<domSkin>(pElem);
 
         if (skin)
         {
@@ -1281,9 +1287,9 @@ void LLDAELoader::processDomModel(LLModel* model, DAE* dae, daeElement* root, do
         mesh_scale *= normalized_transformation;
         normalized_transformation = mesh_scale;
 
-        glm::mat4 inv_mat = glm::make_mat4((F32*)normalized_transformation.mMatrix);
-        inv_mat = glm::inverse(inv_mat);
-        LLMatrix4 inverse_normalized_transformation(glm::value_ptr(inv_mat));
+        LLMatrix4a inv_mat;
+        inv_mat.setInverse(LLMatrix4a(normalized_transformation));
+        const LLMatrix4 inverse_normalized_transformation = inv_mat.toMatrix4();
 
         domSkin::domBind_shape_matrix* bind_mat = skin->getBind_shape_matrix();
 
@@ -1302,10 +1308,10 @@ void LLDAELoader::processDomModel(LLModel* model, DAE* dae, daeElement* root, do
                 }
             }
 
-            skin_info.mBindShapeMatrix.loadu(mat);
+            skin_info.mBindShapeMatrix.set(mat);
 
             LLMatrix4a trans(normalized_transformation);
-            matMul(trans, skin_info.mBindShapeMatrix, skin_info.mBindShapeMatrix);
+            skin_info.mBindShapeMatrix.setMul(trans, skin_info.mBindShapeMatrix);
         }
 
 
@@ -2239,7 +2245,7 @@ void LLDAELoader::processElement( daeElement* element, bool& badElement, DAE* da
                         {
                             // Don't change model's name if possible, it will play havoc with scenes that already use said model.
                             size_t ext_pos = getSuffixPosition(model->mLabel);
-                            if (ext_pos != -1)
+                            if (ext_pos != std::string::npos)
                             {
                                 label = model->mLabel.substr(0, ext_pos);
                             }
@@ -2393,8 +2399,9 @@ LLImportMaterial LLDAELoader::profileToMaterial(domProfile_COMMON* material, DAE
             }
             else if (texture->getTexture())
             {
-                domImage* image = NULL;
-                dae->getDatabase()->getElement((daeElement**) &image, 0, texture->getTexture(), COLLADA_TYPE_IMAGE);
+                daeElement* pElem = nullptr;
+                dae->getDatabase()->getElement(&pElem, 0, texture->getTexture(), COLLADA_TYPE_IMAGE);
+                domImage* image = daeSafeCast<domImage>(pElem);
                 if (image)
                 {
                     // we only support init_from now - embedded data will come later
@@ -2484,7 +2491,7 @@ std::string LLDAELoader::getElementLabel(daeElement *element)
             // make sure that index won't mix up with pre-named lod extensions
             size_t ext_pos = getSuffixPosition(name);
 
-            if (ext_pos == -1)
+            if (ext_pos == std::string::npos)
             {
                 return name + index_string;
             }
@@ -2530,7 +2537,7 @@ std::string LLDAELoader::getLodlessLabel(daeElement *element)
 {
     std::string label = getElementLabel(element);
     size_t ext_pos = getSuffixPosition(label);
-    if (ext_pos != -1)
+    if (ext_pos != std::string::npos)
     {
         return label.substr(0, ext_pos);
     }

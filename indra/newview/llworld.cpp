@@ -130,8 +130,7 @@ LLWorld::LLWorld() :
     *(default_texture++) = MAX_WATER_COLOR.mV[3];
 
     mDefaultWaterTexturep = LLViewerTextureManager::getLocalTexture(raw.get(), false);
-    gGL.getTexUnit(0)->bind(mDefaultWaterTexturep);
-    mDefaultWaterTexturep->setAddressMode(LLTexUnit::TAM_CLAMP);
+    // SKOOMA-PORT: address mode is chosen by the sampler at each bind now; nothing to set here.
     LLViewerRegion::sVOCacheCullingEnabled = gSavedSettings.getBOOL("RequestFullRegionCache") && gSavedSettings.getBOOL("ObjectCacheEnabled");
 }
 
@@ -1131,7 +1130,7 @@ void LLWorld::updateVisibilities()
             if (LLViewerCamera::getInstance()->AABBInFrustum(bounds[0], bounds[1]))
             {
                 regionp->calculateCameraDistance();
-                regionp->getLand().updatePatchVisibilities(gAgent);
+                // SKOOMA-PORT: per-patch visibility/LOD is gone; the terrain is tessellated on the GPU.
             }
             else
             {

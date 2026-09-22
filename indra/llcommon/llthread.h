@@ -158,6 +158,8 @@ public:
 
 //============================================================================
 
+// SKOOMA-PORT: from Alchemy. Denormals flushed to zero on the way in and out, rounding to nearest.
+extern LL_COMMON_API void set_thread_fp_mode();
 extern LL_COMMON_API bool assert_main_thread();
 extern LL_COMMON_API bool on_main_thread();
 

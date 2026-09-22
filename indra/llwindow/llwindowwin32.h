@@ -129,6 +129,11 @@ public:
     static std::vector<std::string> getDynamicFallbackFontList();
     static void setDPIAwareness();
 
+    // SKOOMA-PORT: from Alchemy. GL entry points are resolved function pointers (llglheaders.h);
+    // wglGetProcAddress answers for extensions only, so GL 1.0/1.1 come from opengl32.dll itself.
+    static PROC WINAPI getProcAddress(const char* func);
+    static HMODULE sGLDLLHandle;
+
     void* getDirectInput8() override;
     bool getInputDevices(U32 device_type_filter,
                                      std::function<bool(std::string&, LLSD&, void*)> osx_callback,

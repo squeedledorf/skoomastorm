@@ -535,10 +535,10 @@ bool LLLocalMeshImportDAE::processSkin(daeDatabase* collada_db, daeElement* coll
                 mat4_proxy.mMatrix[matrix_i][matrix_j] = (F32)bind_matrix_value[matrix_i + (matrix_j * 4)];
             }
         }
-        skininfop->mBindShapeMatrix.loadu(mat4_proxy);
+        skininfop->mBindShapeMatrix.loadu(&mat4_proxy.mMatrix[0][0]);
         // matrix multiplication order matters, so this is as clean as it gets.
         LLMatrix4a transform{normalized_transformation};
-        matMul(transform, skininfop->mBindShapeMatrix, skininfop->mBindShapeMatrix);
+        skininfop->mBindShapeMatrix.setMul(transform, skininfop->mBindShapeMatrix);
     }
 
     LL_DEBUGS("LocalMesh") << "Loading Joint Map." << LL_ENDL;

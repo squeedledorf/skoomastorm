@@ -55,9 +55,303 @@
 #include "llmetricperformancetester.h"
 #include "llviewerstats.h"
 
+// SKOOMA-PORT: Alchemy's llmath dropped ll_remove_outliers; kept here as it was.
+template <class VEC_TYPE>
+static void ll_remove_outliers(std::vector<VEC_TYPE>& data, F32 k)
+{
+    if (data.size() < 100)
+    { //not enough samples
+        return;
+    }
+
+    VEC_TYPE Q1 = data[data.size()/4];
+    VEC_TYPE Q3 = data[data.size()-data.size()/4-1];
+
+    if ((F32)(Q3-Q1) < 1.f)
+    {
+        // not enough variation to detect outliers
+        return;
+    }
+
+
+    VEC_TYPE min = (VEC_TYPE) ((F32) Q1-k * (F32) (Q3-Q1));
+    VEC_TYPE max = (VEC_TYPE) ((F32) Q3+k * (F32) (Q3-Q1));
+
+    U32 i = 0;
+    while (i < data.size() && data[i] < min)
+    {
+        i++;
+    }
+
+    size_t j = data.size()-1;
+    while (j > 0 && data[j] > max)
+    {
+        j--;
+    }
+
+    if (j < data.size()-1)
+    {
+        data.erase(data.begin()+j, data.end());
+    }
+
+    if (i > 0)
+    {
+        data.erase(data.begin(), data.begin()+i);
+    }
+}
+
+
 //////////////////////////////////////////////////////////////////////////////
 
 using namespace LLTrace;
+
+// SKOOMA-PORT: Alchemy's llrender2dutils dropped this (it has no fast timer view); this is the old
+// body with edges fixed at ROUNDED_RECT_ALL, the only way it was called.
+static void gl_segmented_rect_2d_fragment_tex(const LLRect& rect,
+    const S32 texture_width,
+    const S32 texture_height,
+    const S32 border_size,
+    const F32 start_fragment,
+    const F32 end_fragment)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
+    const S32 left = rect.mLeft;
+    const S32 right = rect.mRight;
+    const S32 top = rect.mTop;
+    const S32 bottom = rect.mBottom;
+    S32 width = llabs(right - left);
+    S32 height = llabs(top - bottom);
+
+    gGL.pushUIMatrix();
+
+    gGL.translateUI((F32)left, (F32)bottom, 0.f);
+    LLVector2 border_uv_scale((F32)border_size / (F32)texture_width, (F32)border_size / (F32)texture_height);
+
+    if (border_uv_scale.mV[VX] > 0.5f)
+    {
+        border_uv_scale *= 0.5f / border_uv_scale.mV[VX];
+    }
+    if (border_uv_scale.mV[VY] > 0.5f)
+    {
+        border_uv_scale *= 0.5f / border_uv_scale.mV[VY];
+    }
+
+    F32 border_scale = llmin((F32)border_size, (F32)width * 0.5f, (F32)height * 0.5f);
+    LLVector2 border_width_left = LLVector2(border_scale, 0.f);
+    LLVector2 border_width_right = LLVector2(border_scale, 0.f);
+    LLVector2 border_height_bottom = LLVector2(0.f, border_scale);
+    LLVector2 border_height_top = LLVector2(0.f, border_scale);
+    LLVector2 width_vec((F32)width, 0.f);
+    LLVector2 height_vec(0.f, (F32)height);
+
+    F32 middle_start = border_scale / (F32)width;
+    F32 middle_end = 1.f - middle_start;
+
+    F32 u_min;
+    F32 u_max;
+    LLVector2 x_min;
+    LLVector2 x_max;
+
+    gGL.begin(LLRender::TRIANGLES);
+    {
+        if (start_fragment < middle_start)
+        {
+            u_min = (start_fragment / middle_start)         * border_uv_scale.mV[VX];
+            u_max = llmin(end_fragment / middle_start, 1.f) * border_uv_scale.mV[VX];
+            x_min = (start_fragment / middle_start)         * border_width_left;
+            x_max = llmin(end_fragment / middle_start, 1.f) * border_width_left;
+
+            // draw bottom left
+            gGL.texCoord2f(u_min, 0.f);
+            gGL.vertex2fv(x_min.mV);
+
+            gGL.texCoord2f(border_uv_scale.mV[VX], 0.f);
+            gGL.vertex2fv(x_max.mV);
+
+            gGL.texCoord2f(u_max, border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_max + border_height_bottom).mV);
+
+            gGL.texCoord2f(u_min, 0.f);
+            gGL.vertex2fv(x_min.mV);
+
+            gGL.texCoord2f(u_max, border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_max + border_height_bottom).mV);
+
+            gGL.texCoord2f(u_min, border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_min + border_height_bottom).mV);
+
+            // draw left
+            gGL.texCoord2f(u_min, border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_min + border_height_bottom).mV);
+
+            gGL.texCoord2f(u_max, border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_max + border_height_bottom).mV);
+
+            gGL.texCoord2f(u_max, 1.f - border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_max + height_vec - border_height_top).mV);
+
+            gGL.texCoord2f(u_min, border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_min + border_height_bottom).mV);
+
+            gGL.texCoord2f(u_max, 1.f - border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_max + height_vec - border_height_top).mV);
+
+            gGL.texCoord2f(u_min, 1.f - border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_min + height_vec - border_height_top).mV);
+
+            // draw top left
+            gGL.texCoord2f(u_min, 1.f - border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_min + height_vec - border_height_top).mV);
+
+            gGL.texCoord2f(u_max, 1.f - border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_max + height_vec - border_height_top).mV);
+
+            gGL.texCoord2f(u_max, 1.f);
+            gGL.vertex2fv((x_max + height_vec).mV);
+
+            gGL.texCoord2f(u_min, 1.f - border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_min + height_vec - border_height_top).mV);
+
+            gGL.texCoord2f(u_max, 1.f);
+            gGL.vertex2fv((x_max + height_vec).mV);
+
+            gGL.texCoord2f(u_min, 1.f);
+            gGL.vertex2fv((x_min + height_vec).mV);
+        }
+
+        if (end_fragment > middle_start || start_fragment < middle_end)
+        {
+            x_min = border_width_left + ((llclamp(start_fragment, middle_start, middle_end) - middle_start)) * width_vec;
+            x_max = border_width_left + ((llclamp(end_fragment, middle_start, middle_end) - middle_start)) * width_vec;
+
+            // draw bottom middle
+            gGL.texCoord2f(border_uv_scale.mV[VX], 0.f);
+            gGL.vertex2fv(x_min.mV);
+
+            gGL.texCoord2f(1.f - border_uv_scale.mV[VX], 0.f);
+            gGL.vertex2fv((x_max).mV);
+
+            gGL.texCoord2f(1.f - border_uv_scale.mV[VX], border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_max + border_height_bottom).mV);
+
+            gGL.texCoord2f(border_uv_scale.mV[VX], 0.f);
+            gGL.vertex2fv(x_min.mV);
+
+            gGL.texCoord2f(1.f - border_uv_scale.mV[VX], border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_max + border_height_bottom).mV);
+
+            gGL.texCoord2f(border_uv_scale.mV[VX], border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_min + border_height_bottom).mV);
+
+            // draw middle
+            gGL.texCoord2f(border_uv_scale.mV[VX], border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_min + border_height_bottom).mV);
+
+            gGL.texCoord2f(1.f - border_uv_scale.mV[VX], border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_max + border_height_bottom).mV);
+
+            gGL.texCoord2f(1.f - border_uv_scale.mV[VX], 1.f - border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_max + height_vec - border_height_top).mV);
+
+            gGL.texCoord2f(border_uv_scale.mV[VX], border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_min + border_height_bottom).mV);
+
+            gGL.texCoord2f(1.f - border_uv_scale.mV[VX], 1.f - border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_max + height_vec - border_height_top).mV);
+
+            gGL.texCoord2f(border_uv_scale.mV[VX], 1.f - border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_min + height_vec - border_height_top).mV);
+
+            // draw top middle
+            gGL.texCoord2f(border_uv_scale.mV[VX], 1.f - border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_min + height_vec - border_height_top).mV);
+
+            gGL.texCoord2f(1.f - border_uv_scale.mV[VX], 1.f - border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_max + height_vec - border_height_top).mV);
+
+            gGL.texCoord2f(1.f - border_uv_scale.mV[VX], 1.f);
+            gGL.vertex2fv((x_max + height_vec).mV);
+
+            gGL.texCoord2f(border_uv_scale.mV[VX], 1.f - border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_min + height_vec - border_height_top).mV);
+
+            gGL.texCoord2f(1.f - border_uv_scale.mV[VX], 1.f);
+            gGL.vertex2fv((x_max + height_vec).mV);
+
+            gGL.texCoord2f(border_uv_scale.mV[VX], 1.f);
+            gGL.vertex2fv((x_min + height_vec).mV);
+        }
+
+        if (end_fragment > middle_end)
+        {
+            u_min = 1.f         - ((1.f - llmax(0.f, (start_fragment - middle_end) / middle_start)) * border_uv_scale.mV[VX]);
+            u_max = 1.f         - ((1.f - ((end_fragment - middle_end) / middle_start)) * border_uv_scale.mV[VX]);
+            x_min = width_vec   - ((1.f - llmax(0.f, (start_fragment - middle_end) / middle_start)) * border_width_right);
+            x_max = width_vec   - ((1.f - ((end_fragment - middle_end) / middle_start)) * border_width_right);
+
+            // draw bottom right
+            gGL.texCoord2f(u_min, 0.f);
+            gGL.vertex2fv((x_min).mV);
+
+            gGL.texCoord2f(u_max, 0.f);
+            gGL.vertex2fv(x_max.mV);
+
+            gGL.texCoord2f(u_max, border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_max + border_height_bottom).mV);
+
+            gGL.texCoord2f(u_min, 0.f);
+            gGL.vertex2fv((x_min).mV);
+
+            gGL.texCoord2f(u_max, border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_max + border_height_bottom).mV);
+
+            gGL.texCoord2f(u_min, border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_min + border_height_bottom).mV);
+
+            // draw right
+            gGL.texCoord2f(u_min, border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_min + border_height_bottom).mV);
+
+            gGL.texCoord2f(u_max, border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_max + border_height_bottom).mV);
+
+            gGL.texCoord2f(u_max, 1.f - border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_max + height_vec - border_height_top).mV);
+
+            gGL.texCoord2f(u_min, border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_min + border_height_bottom).mV);
+
+            gGL.texCoord2f(u_max, 1.f - border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_max + height_vec - border_height_top).mV);
+
+            gGL.texCoord2f(u_min, 1.f - border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_min + height_vec - border_height_top).mV);
+
+            // draw top right
+            gGL.texCoord2f(u_min, 1.f - border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_min + height_vec - border_height_top).mV);
+
+            gGL.texCoord2f(u_max, 1.f - border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_max + height_vec - border_height_top).mV);
+
+            gGL.texCoord2f(u_max, 1.f);
+            gGL.vertex2fv((x_max + height_vec).mV);
+
+            gGL.texCoord2f(u_min, 1.f - border_uv_scale.mV[VY]);
+            gGL.vertex2fv((x_min + height_vec - border_height_top).mV);
+
+            gGL.texCoord2f(u_max, 1.f);
+            gGL.vertex2fv((x_max + height_vec).mV);
+
+            gGL.texCoord2f(u_min, 1.f);
+            gGL.vertex2fv((x_min + height_vec).mV);
+        }
+    }
+    gGL.end();
+
+    gGL.popUIMatrix();
+}
+
 
 static constexpr S32 MAX_VISIBLE_HISTORY = 12;
 static constexpr S32 LINE_GRAPH_HEIGHT = 240;
@@ -421,7 +715,7 @@ void LLFastTimerView::draw()
     legend_panel->localRectToOtherView(legend_panel->getLocalRect(), &mLegendRect, this);
 
     // Draw the window background
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTextureSlot(0)->unbind();
     gl_rect_2d(getLocalRect(), LLColor4(0.f, 0.f, 0.f, 0.25f));
 
     drawHelp(getRect().getHeight() - MARGIN);
@@ -540,7 +834,7 @@ void LLFastTimerView::exportCharts(const std::string& base, const std::string& t
     gGL.ortho(-0.05f, 1.05f, -0.05f, 1.05f, -1.0f, 1.0f);
 
     //render charts
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     buffer.bindTarget();
 
@@ -1034,7 +1328,7 @@ void LLFastTimerView::drawLineGraph()
 {
     LL_PROFILE_ZONE_SCOPED;
     //draw line graph history
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
     LLLocalClipRect clip(mGraphRect);
 
     //normalize based on last frame's maximum
@@ -1510,7 +1804,7 @@ void LLFastTimerView::drawBars()
     const S32 image_width = bar_image->getTextureWidth();
     const S32 image_height = bar_image->getTextureHeight();
 
-    gGL.getTexUnit(0)->bind(bar_image->getImage());
+    gGL.getTextureSlot(0)->bindSampled(bar_image->getImage(), ALSamplers::AnisoWrap);
     {
         const S32 histmax = (S32)mRecording.getNumRecordedPeriods();
 
@@ -1564,7 +1858,7 @@ void LLFastTimerView::drawBars()
         }
 
     }
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 }
 
 F32Seconds LLFastTimerView::updateTimerBarWidths(LLTrace::BlockTimerStatHandle* time_block, TimerBarRow& row, S32 history_index, U32& bar_index)

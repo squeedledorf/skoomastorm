@@ -2630,3 +2630,32 @@ bool LLTabContainer::addLabelToolTip(LLTabTuple* tuple)
     return false;
 }
 // </FS:minerjr> [FIRE-36603]
+
+void LLTabContainer::setTabBadge(LLPanel* child, const std::string& label)
+{
+    LLTabTuple* tuple = getTabByPanel(child);
+    LLButton* button = tuple ? tuple->mButton : nullptr;
+    if (!button)
+    {
+        return;
+    }
+
+    if (!button->hasBadge())
+    {
+        if (label.empty())
+        {
+            return;
+        }
+        // The strip holds the badge rather than the button, which would clip
+        // it; placed at the right of the tab, level with its middle.
+        setAcceptsBadge(true);
+        LLBadge::Params p;
+        p.label = label;
+        p.location = LLRelPos::RIGHT;
+        p.location_percent_hcenter = 70;
+        button->initBadgeParams(p);
+        button->addBadgeToParentHolder();
+    }
+    button->setBadgeLabel(label);
+    button->setBadgeVisibility(!label.empty());
+}

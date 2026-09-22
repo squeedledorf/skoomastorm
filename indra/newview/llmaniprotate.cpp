@@ -116,7 +116,7 @@ void LLManipRotate::handleSelect()
 void LLManipRotate::render()
 {
     LLGLSUIDefault gls_ui;
-    gGL.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
+    gGL.getTextureSlot(0)->bindSampled(LLViewerFetchedTexture::sWhiteImagep, ALSamplers::AnisoWrap);
     LLGLDepthTest gls_depth(GL_TRUE);
     LLGLEnable gl_blend(GL_BLEND);
 
@@ -284,7 +284,6 @@ void LLManipRotate::render()
             }
 
             LLGLEnable cull_face(GL_CULL_FACE);
-            LLGLEnable clip_plane0(GL_CLIP_PLANE0);
             LLGLDepthTest gls_depth(GL_FALSE);
             //LLGLDisable gls_stencil(GL_STENCIL_TEST);
 
@@ -584,7 +583,6 @@ void LLManipRotate::drag( S32 x, S32 y )
 
     bool damped = mSmoothRotate;
     mSmoothRotate = false;
-    bool gltf_mode = false;
 
     for (LLObjectSelection::iterator iter = mObjectSelection->begin();
          iter != mObjectSelection->end(); iter++)
@@ -598,16 +596,6 @@ void LLManipRotate::drag( S32 x, S32 y )
             ((root_object == NULL) || !root_object->isPermanentEnforced()) &&
             (object->isRootEdit() || selectNode->mIndividualSelection))
         {
-
-            if (selectNode->mSelectedGLTFNode != -1)
-            {
-                LLQuaternion new_rot = selectNode->mSavedRotation * mRotation;
-
-                object->setGLTFNodeRotationAgent(selectNode->mSelectedGLTFNode, new_rot);
-
-                gltf_mode = true;
-            }
-            else if (!gltf_mode)
             {
                 if (!object->isRootEdit())
                 {
@@ -675,7 +663,6 @@ void LLManipRotate::drag( S32 x, S32 y )
     }
 
     // update positions
-    if (!gltf_mode)
     {
         for (LLObjectSelection::iterator iter = mObjectSelection->begin();
             iter != mObjectSelection->end(); iter++)
@@ -694,11 +681,6 @@ void LLManipRotate::drag( S32 x, S32 y )
                 LLVector3 old_position;
                 LLVector3 new_position;
 
-                if (selectNode->mSelectedGLTFNode != -1)
-                {
-
-                }
-                else
                 {
                     if (object->isAttachment() && object->mDrawable.notNull())
                     {

@@ -32,6 +32,8 @@
 #include "llfloater.h"
 #include "lltextbox.h"
 
+#include <functional>
+
 //
 // Classes
 //
@@ -93,6 +95,13 @@ public:
 
     void            showPicker(bool take_focus);
 
+    /// Lets an owner take over picking (Alchemy Lightbox): the classic
+    /// floater opens only if the override answers false.
+    typedef std::function<bool(LLColorSwatchCtrl*)> picker_override_t;
+    void            setPickerOverride(picker_override_t cb) { mPickerOverride = std::move(cb); }
+    /// The colour picker floater itself, whatever the override would say.
+    void            showClassicPicker(bool take_focus);
+
     /*virtual*/ bool    handleMouseDown(S32 x, S32 y, MASK mask);
     /*virtual*/ bool    handleMouseUp(S32 x, S32 y, MASK mask);
     /*virtual*/ bool    handleDoubleClick(S32 x,S32 y,MASK mask);
@@ -115,6 +124,7 @@ protected:
     LLUIColor               mBorderColor;
     LLTextBox*              mCaption;
     LLHandle<LLFloater>     mPickerHandle;
+    picker_override_t       mPickerOverride;
     class LLViewBorder*     mBorder;
     bool                    mCanApplyImmediately;
     commit_callback_t       mOnCancelCallback,

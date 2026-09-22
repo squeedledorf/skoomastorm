@@ -122,11 +122,10 @@ void ss_squeeze_self_test()
         return;
     }
 
-    gGL.getTexUnit(0)->activate();
     ss_drain_gl_errors();
 
-    // allow_compression false so RenderCompressTextures cannot rewrite the internal format underneath the uncompressed leg of this test
-    LLPointer<LLImageGL> image = new LLImageGL(true, false);
+    // SKOOMA-PORT: no allow_compression flag any more; the RenderCompressTextures rewrite it guarded against is gone.
+    LLPointer<LLImageGL> image = new LLImageGL(true);
     if (!image->setSize(SS_SQUEEZE_TEST_SIZE, SS_SQUEEZE_TEST_SIZE, 4))
     {
         LL_WARNS("Squeeze") << "self test failed, setSize rejected the test dimensions" << LL_ENDL;

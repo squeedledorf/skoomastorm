@@ -220,7 +220,6 @@
 #include "lltracker.h"
 #include "llviewerparcelmgr.h"
 #include "llworldmapview.h"
-#include "llpostprocess.h"
 
 #include "lldebugview.h"
 #include "llconsole.h"
@@ -248,7 +247,7 @@
 #include "llagentpilot.h"
 #include "llvovolume.h"
 #include "llflexibleobject.h"
-#include "llvosurfacepatch.h"
+#include "lldrawpoolterrain.h"
 #include "llviewerfloaterreg.h"
 #include "llcommandlineparser.h"
 #include "llfloatermemleak.h"
@@ -281,7 +280,6 @@
 #include "llavatariconctrl.h"
 #include "llgroupiconctrl.h"
 #include "llviewerassetstats.h"
-#include "gltfscenemanager.h"
 
 #include "workqueue.h"
 using namespace LL;
@@ -639,8 +637,11 @@ static void settings_to_globals()
     LLRender::sGLCoreProfile = gSavedSettings.getBOOL("RenderGLContextCoreProfile");
 #endif
     LLRender::sNsightDebugSupport = gSavedSettings.getBOOL("RenderNsightDebugSupport");
-    LLImageGL::sGlobalUseAnisotropic    = gSavedSettings.getBOOL("RenderAnisotropic");
+    // SKOOMA-PORT: anisotropy is baked into the sampler cache; F32_MAX resolves to the driver maximum there, as before.
+    LLRender::sAnisotropicFilteringLevel = gSavedSettings.getBOOL("RenderAnisotropic") ? F32_MAX : 0.f;
+#if 0 // PORT-TODO: RenderCompressTextures does nothing now; the ported LLImageGL has no sCompressTextures toggle.
     LLImageGL::sCompressTextures        = gSavedSettings.getBOOL("RenderCompressTextures");
+#endif
     // <SS:Nexii>
     LLImageGL::sSqueezeEnabled          = gSavedSettings.getBOOL("SSSqueezeEnabled");
     LLImageGL::sSSAlphaMaskTrustedDiscard = gSavedSettings.getS32("SSAlphaMaskTrustedDiscard");
@@ -682,8 +683,8 @@ static void settings_modify()
     LLPipeline::sRenderTransparentWater = gSavedSettings.getBOOL("RenderTransparentWater");
     LLPipeline::sRenderDeferred = true; // false is deprecated
     LLRenderTarget::sUseFBO             = LLPipeline::sRenderDeferred;
-    LLVOSurfacePatch::sLODFactor        = gSavedSettings.getF32("RenderTerrainLODFactor");
-    LLVOSurfacePatch::sLODFactor *= LLVOSurfacePatch::sLODFactor; //square lod factor to get exponential range of [1,4]
+    LLDrawPoolTerrain::sLODFactor        = gSavedSettings.getF32("RenderTerrainLODFactor");
+    LLDrawPoolTerrain::sLODFactor *= LLDrawPoolTerrain::sLODFactor; //square lod factor to get exponential range of [1,4]
     gDebugGL       = gDebugGLSession || gDebugSession;
     gDebugPipeline = gSavedSettings.getBOOL("RenderDebugPipeline");
 }
@@ -1498,7 +1499,6 @@ bool LLAppViewer::init()
     LLViewerStatsRecorder::createInstance();
     LLSelectMgr::createInstance();
     LLViewerCamera::createInstance();
-    LL::GLTFSceneManager::createInstance();
 
     gSavedSettings.setU32("DebugQualityPerformance", gSavedSettings.getU32("RenderQualityPerformance"));
 
@@ -2276,7 +2276,6 @@ bool LLAppViewer::cleanup()
 
     SUBSYSTEM_CLEANUP(LLAvatarAppearance);
 
-    SUBSYSTEM_CLEANUP(LLPostProcess);
 
     LLTracker::cleanupInstance();
 
@@ -2592,7 +2591,6 @@ bool LLAppViewer::cleanup()
     ll_close_fail_log();
 
     LLError::LLCallStacks::cleanup();
-    LL::GLTFSceneManager::deleteSingleton();
     LLEnvironment::deleteSingleton();
     LLSelectMgr::deleteSingleton();
     LLViewerStatsRecorder::deleteSingleton();
@@ -4142,7 +4140,7 @@ LLSD LLAppViewer::getViewerInfo() const
     info["GRAPHICS_CARD_VENDOR"] = ll_safe_string((const char*)(glGetString(GL_VENDOR)));
     info["GRAPHICS_CARD"] = ll_safe_string((const char*)(glGetString(GL_RENDERER)));
     info["GRAPHICS_CARD_MEMORY"] = LLSD::Integer(gGLManager.mVRAM);
-    info["GRAPHICS_CARD_MEMORY_DETECTED"] = gGLManager.mVRAMDetected; // <FS:Beq/> allow detected hardware to be overridden.
+    info["GRAPHICS_CARD_MEMORY_DETECTED"] = LLSD::Integer(gGLManager.mVRAMDetected); // <FS:Beq/> allow detected hardware to be overridden.
 
 #if LL_WINDOWS
     std::string drvinfo;
@@ -6291,7 +6289,6 @@ void LLAppViewer::idle()
         {
             LLPerfStats::tunedAvatars=0; // <FS:Beq> reset the number of avatars that have been tweaked.
             gObjectList.update(gAgent);
-            LL::GLTFSceneManager::instance().update();
         }
     }
 

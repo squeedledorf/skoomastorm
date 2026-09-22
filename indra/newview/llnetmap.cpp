@@ -399,7 +399,7 @@ void LLNetMap::draw()
     {
         LLLocalClipRect clip(getLocalRect());
         {
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTextureSlot(0)->unbind();
 
             gGL.matrixMode(LLRender::MM_MODELVIEW);
 
@@ -490,7 +490,7 @@ void LLNetMap::draw()
 
                         if (pRegionImage->hasGLTexture())
                         {
-                            gGL.getTexUnit(0)->bind(pRegionImage);
+                            gGL.getTextureSlot(0)->bindSampled(pRegionImage, ALSamplers::AnisoWrap);
                             gGL.begin(LLRender::TRIANGLES);
                             {
                                 gGL.texCoord2f(0.f, 1.f);
@@ -517,7 +517,7 @@ void LLNetMap::draw()
             else
             {
                 // Draw using texture.
-                gGL.getTexUnit(0)->bind(regionp->getLand().getSTexture());
+                gGL.getTextureSlot(0)->bindSampled(regionp->getLand().getSTexture(), ALSamplers::AnisoWrap);
                 gGL.begin(LLRender::TRIANGLES);
                 {
                     gGL.texCoord2f(0.f, 1.f);
@@ -612,7 +612,7 @@ void LLNetMap::draw()
         map_center_agent.mV[VX] *= scale_pixels_per_meter;
         map_center_agent.mV[VY] *= scale_pixels_per_meter;
 
-//      gGL.getTexUnit(0)->bind(mObjectImagep);
+//      gGL.getTextureSlot(0)->bindSampled(mObjectImagep, ALSamplers::AnisoWrap);
         F32 image_half_width = 0.5f*mObjectMapPixels;
         F32 image_half_height = 0.5f*mObjectMapPixels;
 
@@ -620,7 +620,7 @@ void LLNetMap::draw()
         if (s_fShowObjects)
         {
             gGL.color4f(1.f, 1.f, 1.f, 1.f);
-            gGL.getTexUnit(0)->bind(mObjectImagep);
+            gGL.getTextureSlot(0)->bindSampled(mObjectImagep, ALSamplers::AnisoWrap);
 // [/SL:KB]
             gGL.begin(LLRender::TRIANGLES);
             {
@@ -651,7 +651,7 @@ void LLNetMap::draw()
             map_center_agent.mV[VY] *= mScale / region_width;
 
             gGL.color4f(1.f, 1.f, 1.f, 1.f);
-            gGL.getTexUnit(0)->bind(mParcelImagep);
+            gGL.getTextureSlot(0)->bindSampled(mParcelImagep, ALSamplers::AnisoWrap);
             gGL.begin(LLRender::TRIANGLES);
                 gGL.texCoord2f(0.f, 1.f);
                 gGL.vertex2f(map_center_agent.mV[VX] - image_half_width, image_half_height + map_center_agent.mV[VY]);
@@ -924,7 +924,7 @@ void LLNetMap::draw()
         const F32 arc_end = (horiz_fov / 2.0f) + F_PI_BY_TWO;
         const S32 steps = llmax(1, (S32)((horiz_fov * steps_per_radian) + 0.5f));
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
 
         // <FS:Ansariel> Draw pick radius; from Ayamo Nozaki (Exodus Viewer)
         static LLUIColor pick_radius_color = LLUIColorTable::instance().getColor("MapPickRadiusColor", map_frustum_color());

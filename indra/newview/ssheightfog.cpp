@@ -45,6 +45,7 @@
 #include "llviewershadermgr.h"
 #include "llworld.h"
 #include "pipeline.h"
+#include "ssglmcompat.h"
 
 #include <sstream>
 
@@ -224,8 +225,8 @@ void SSHeightFog::render()
         S32 diff_map = gCopyDepthProgram.getTextureChannel(LLShaderMgr::DIFFUSE_MAP);
         S32 depth_map = gCopyDepthProgram.getTextureChannel(LLShaderMgr::DEFERRED_DEPTH);
 
-        gGL.getTexUnit(diff_map)->bind(&screen);
-        gGL.getTexUnit(depth_map)->bind(&depth_src_target, true);
+        gGL.getTextureSlot(diff_map)->bind(&screen);
+        gGL.getTextureSlot(depth_map)->bind(&depth_src_target, true);
 
         gGL.setColorMask(false, false);
         gPipeline.mScreenTriangleVB->setBuffer();
@@ -236,8 +237,8 @@ void SSHeightFog::render()
         // diffuse sampler to overwrite it, and a lingering binding is a feedback loop (the
         // whiteout's own lesson: flickering black and a frozen frame the moment the layer first
         // drew).
-        gGL.getTexUnit(diff_map)->unbind(LLTexUnit::TT_TEXTURE);
-        gGL.getTexUnit(depth_map)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(diff_map)->unbind();
+        gGL.getTextureSlot(depth_map)->unbind();
 
         mDepthCopy.flush();
         screen.bindTarget();
@@ -256,7 +257,7 @@ void SSHeightFog::render()
     // directly, not through LLPipeline::bindDeferredShader, so every uniform beyond that
     // automatic sync (inv_proj) is uploaded here by hand.
     gSSPostFogProgram.bind();
-    gSSPostFogProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &mDepthCopy, true);
+    gSSPostFogProgram.bindDepthTexture(LLShaderMgr::DEFERRED_DEPTH, &mDepthCopy, ALSamplers::BilinearClamp);
     gSSPostFogProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)w, (GLfloat)h);
 
     // The surface field window - the same column lookup the exposure march and the wet/snow

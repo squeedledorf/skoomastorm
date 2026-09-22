@@ -13,6 +13,15 @@ include(LLCoreHttp)
 set(llui_SOURCE_FILES
     fsregistrarutils.cpp
 
+    alcolorpicker.cpp
+    aldockpanel.cpp
+    alemptystate.cpp
+    alhistorylist.cpp
+    alpanefolds.cpp
+    alpopover.cpp
+    alquickopen.cpp
+    alsettingrow.cpp
+    alstudiofloater.cpp
     llaccordionctrl.cpp
     llaccordionctrltab.cpp
     llbadge.cpp
@@ -126,6 +135,16 @@ set(llui_HEADER_FILES
 
     fsregistrarutils.h
 
+    alcolorpicker.h
+    aldockpanel.h
+    alemptystate.h
+    alhistorylist.h
+    alpanefolds.h
+    alpopover.h
+    alquickopen.h
+    alsettingrow.h
+    alstudiofloater.h
+    alviewtype.h
     llaccordionctrl.h
     llaccordionctrltab.h
     llbadge.h

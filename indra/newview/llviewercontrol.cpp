@@ -382,8 +382,10 @@ static bool handleLUTBufferChanged(const LLSD& newvalue)
 
 static bool handleAnisotropicChanged(const LLSD& newvalue)
 {
-    LLImageGL::sGlobalUseAnisotropic = newvalue.asBoolean();
-    LLImageGL::dirtyTexOptions();
+    // SKOOMA-PORT: samplers are immutable; drop them so the next binds rebuild at the new level.
+    LLRender::sAnisotropicFilteringLevel = newvalue.asBoolean() ? F32_MAX : 0.f;
+    gGL.clearSamplers();
+    gGL.warmupSamplers();
     return true;
 }
 
@@ -451,11 +453,11 @@ static bool handleAvatarPhysicsLODChanged(const LLSD& newvalue)
 
 static bool handleTerrainLODChanged(const LLSD& newvalue)
 {
-    LLVOSurfacePatch::sLODFactor = (F32)newvalue.asReal();
+    LLDrawPoolTerrain::sLODFactor = (F32)newvalue.asReal();
     //sqaure lod factor to get exponential range of [0,4] and keep
     //a value of 1 in the middle of the detail slider for consistency
     //with other detail sliders (see panel_preferences_graphics1.xml)
-    LLVOSurfacePatch::sLODFactor *= LLVOSurfacePatch::sLODFactor;
+    LLDrawPoolTerrain::sLODFactor *= LLDrawPoolTerrain::sLODFactor;
     return true;
 }
 

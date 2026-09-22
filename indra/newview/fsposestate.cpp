@@ -1,5 +1,9 @@
+#include "llviewerprecompiledheaders.h"
+
 #include "fsposestate.h"
+#include "llvoavatarself.h"   // gAgentAvatarp
 #include "llinventorymodel.h" // gInventory
+#include "llviewerobjectlist.h" // gObjectList
 
 std::map<LLUUID, std::vector<FSPoseState::fsMotionState>> FSPoseState::sMotionStates;
 std::map<LLUUID, int> FSPoseState::sCaptureOrder;

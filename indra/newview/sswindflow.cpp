@@ -43,6 +43,7 @@
 #include "llwindow.h"
 #include "llworld.h"
 #include "pipeline.h"
+#include "ssglmcompat.h"
 #include "threadpool.h"
 #include "workqueue.h"
 
@@ -758,7 +759,7 @@ bool SSWindFlowMap::captureAlong(LLRenderTarget& target, S32 res, const Tile& ti
 
     {
         static LLCullResult cull_result;
-        gPipeline.renderShadow(view, proj, cam, cull_result, true);
+        gPipeline.renderShadow(ss_from_glm(view), ss_from_glm(proj), cam, cull_result, true);
     }
 
     std::vector<F32> depth((size_t)res * res);
@@ -3368,7 +3369,7 @@ void SSWindFlowMap::renderDebugCapture(S32 which)
     LLGLEnable blend(GL_BLEND);
     LLGLDepthTest depth(GL_TRUE, GL_FALSE);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     auto mark = [&](const LLVector3& p, const LLColor4& c, F32 size)
     {
@@ -3574,7 +3575,7 @@ void SSWindFlowMap::renderDebugStreamlines()
     LLGLEnable blend(GL_BLEND);
     LLGLDepthTest depth(GL_TRUE, GL_FALSE);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     struct Vert { LLVector3 mPos; LLColor4 mColor; };
     std::vector<Vert> buckets[SS_WIND_LINE_WIDTHS];
@@ -3740,7 +3741,7 @@ void SSWindFlowMap::renderDebug()
     LLGLEnable blend(GL_BLEND);
     LLGLDepthTest depth(GL_TRUE, GL_FALSE);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     for (const auto& entry : mTiles)
     {

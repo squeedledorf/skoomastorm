@@ -23,10 +23,10 @@
  * $/LicenseInfo$
  */
 
-uniform mat3 normal_matrix;
-uniform mat4 texture_matrix0;
+// Shared matrix stack + derived matrices, spliced from
+// class1/deferred/matricesBlock.glsl and bound at UB_MATRICES.
+//[ENGINE_BLOCK Matrices]
 uniform vec4 ambient_color; // <FS:Beq/> add ambient color to preview shader
-uniform mat4 modelview_projection_matrix;
 
 in vec3 position;
 in vec3 normal;
@@ -37,10 +37,9 @@ uniform vec4 color;
 out vec4 vertex_color;
 out vec2 vary_texcoord0;
 
-uniform vec4 light_position[8];
-uniform vec3 light_direction[8];
-uniform vec3 light_attenuation[8];
-uniform vec3 light_diffuse[8];
+// Shared forward-light arrays, spliced from class1/deferred/lightsBlock.glsl and
+// bound at UB_LIGHTS. Members are read by bare name.
+//[ENGINE_BLOCK Lights]
 
 //===================================================================================================
 //declare these here explicitly to separate them from atmospheric lighting elsewhere to work around
@@ -55,20 +54,19 @@ float calcDirectionalLight(vec3 n, vec3 l)
 
 
 #ifdef HAS_SKIN
-mat4 getObjectSkinnedTransform();
-uniform mat4 modelview_matrix;
-uniform mat4 projection_matrix;
+mat3x4 getSkinBlend();
+vec3 skinDirection(mat3x4 b, vec3 dir);
+vec4 skinTransformH(mat3x4 b, vec3 pos, mat4 m);
 #endif
 
 void main()
 {
     vec3 norm;
 #ifdef HAS_SKIN
-    mat4 mat = getObjectSkinnedTransform();
-    mat = modelview_matrix * mat;
-    vec4 pos = mat * vec4(position.xyz, 1.0);
+    mat3x4 skin = getSkinBlend();
+    vec4 pos = skinTransformH(skin, position.xyz, modelview_matrix);
     gl_Position = projection_matrix * pos;
-    norm = normalize((mat*vec4(normal.xyz+position.xyz,1.0)).xyz-pos.xyz);
+    norm = normalize(mat3(modelview_matrix) * skinDirection(skin, normal.xyz));
 #else
     gl_Position = modelview_projection_matrix * vec4(position.xyz, 1.0);
     norm = normalize(normal_matrix * normal);

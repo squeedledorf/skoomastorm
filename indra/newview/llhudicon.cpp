@@ -154,7 +154,7 @@ void LLHUDIcon::render()
         LLColor4 icon_color = LLColor4::white;
         icon_color.mV[VALPHA] = alpha_factor;
         gGL.color4fv(icon_color.mV);
-        gGL.getTexUnit(0)->bind(mImagep);
+        gGL.getTextureSlot(0)->bindSampled(mImagep, ALSamplers::AnisoClamp);
     }
 
     gGL.begin(LLRender::TRIANGLES);
@@ -179,7 +179,6 @@ void LLHUDIcon::render()
 void LLHUDIcon::setImage(LLViewerTexture* imagep)
 {
     mImagep = imagep;
-    mImagep->setAddressMode(LLTexUnit::TAM_CLAMP);
 }
 
 void LLHUDIcon::setScale(F32 fraction_of_fov)

@@ -44,6 +44,7 @@ public:
     void addBadgeToParentHolder();
 
     bool hasBadgeHolderParent() const { return mHasBadgeHolderParent; };
+    bool hasBadge() const { return mBadge != nullptr; }
     // <FS:Ansariel> Re-add setBadgeLabel
     void setBadgeLabel(const LLStringExplicit& label);
     // </FS:Ansariel>

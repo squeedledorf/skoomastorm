@@ -104,9 +104,11 @@ void hud_render_text(const LLWString &wstr, const LLVector3 &pos_agent,
     //get the render_pos in screen space
 
     LLRect world_view_rect = gViewerWindow->getWorldViewRectRaw();
-    glm::ivec4 viewport(world_view_rect.mLeft, world_view_rect.mBottom, world_view_rect.getWidth(), world_view_rect.getHeight());
-
-    glm::vec3 win_coord = glm::project(glm::vec3(render_pos), get_current_modelview(), get_current_projection(), viewport);
+    const S32 viewport[4] = { world_view_rect.mLeft, world_view_rect.mBottom, world_view_rect.getWidth(), world_view_rect.getHeight() };
+    // SKOOMA-PORT: Alchemy's projection helper and camera matrices replace the glm globals
+    const LLVector3 win_coord_v(al_project(LLVector4a(render_pos.mV[0], render_pos.mV[1], render_pos.mV[2], 1.f), LLViewerCamera::getCurrent().getModelview(),
+                                           LLViewerCamera::getCurrent().getProjection(), viewport).getF32ptr());
+    struct { F32 x, y, z; } win_coord { win_coord_v.mV[0], win_coord_v.mV[1], win_coord_v.mV[2] };
 
     //fonts all render orthographically, set up projection``
     gGL.matrixMode(LLRender::MM_PROJECTION);

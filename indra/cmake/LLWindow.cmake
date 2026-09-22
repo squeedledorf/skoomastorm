@@ -29,7 +29,7 @@ if (LINUX)
   else()
     # The SDL window backend now uses SDL3. LL_SDL2 is kept as the
     # "SDL2+ window" feature switch used across the UI code (IME etc.).
-    target_compile_definitions( ll::SDL INTERFACE LL_SDL3=1 LL_SDL2=1 LL_SDL=1 )
+    target_compile_definitions( ll::SDL INTERFACE LL_SDL3=1 LL_SDL2=1 LL_SDL=1 LL_SDL_WINDOW=1 ) # LL_SDL_WINDOW: Alchemy llgl resolves GL through SDL_GL_GetProcAddress
 
     use_system_binary(SDL3)
     use_prebuilt_binary(SDL3)

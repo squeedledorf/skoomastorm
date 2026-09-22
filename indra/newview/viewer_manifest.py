@@ -113,6 +113,11 @@ class ViewerManifest(LLManifest,FSViewerManifest):
                 # ... and the entire windlight directory
                 self.path("windlight")
 
+                # <AL> Lightbox colour-grading LUTs and bundled Looks
+                self.path("colorlut")
+                self.path("looks")
+                # </AL>
+
                 # ... and the entire image filters directory
                 self.path("filters")
 

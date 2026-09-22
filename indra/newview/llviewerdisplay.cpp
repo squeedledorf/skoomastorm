@@ -28,6 +28,8 @@
 
 #include "llviewerdisplay.h"
 
+// SKOOMA-PORT: alfloaterprogressview.h not ported (non-graphics floater)
+#include "aluniformbuffer.h"
 #include "fsyspath.h"
 #include "hexdump.h"
 #include "llagent.h"
@@ -44,6 +46,7 @@
 #include "llenvironment.h"
 #include "llfasttimer.h"
 #include "llfeaturemanager.h"
+#include "llfloaterreg.h"
 #include "llfloatertools.h"
 #include "llfocusmgr.h"
 #include "llgl.h"
@@ -55,7 +58,6 @@
 #include "llmemory.h"
 #include "llparcel.h"
 #include "llperfstats.h"
-#include "llpostprocess.h"
 #include "llrender.h"
 #include "llscenemonitor.h"
 #include "llsdjson.h"
@@ -101,12 +103,6 @@
 #include "ssworldfieldshapes.h"
 #include "ssnavmesh.h"
 
-#include <boost/json.hpp>
-// [RLVa:KB] - Checked: 2011-05-22 (RLVa-1.3.1a)
-#include "llvisualeffect.h"
-#include "rlvactions.h"
-#include "rlvlocks.h"
-// [/RLVa:KB]
 #include "llpresetsmanager.h"
 #include "fsdata.h"
 
@@ -119,10 +115,12 @@
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
+// [RLVa:KB] - Checked: 2011-05-22 (RLVa-1.3.1a)
+#include "llvisualeffect.h"
+#include "rlvactions.h"
+#include "rlvlocks.h"
+// [/RLVa:KB]
 
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
 
 extern LLPointer<LLViewerTexture> gStartTexture;
 extern bool gShiftFrame;
@@ -173,7 +171,7 @@ void render_ui_3d();
 void render_ui_2d();
 void render_disconnected_background();
 
-void getProfileStatsContext(boost::json::object& stats);
+void getProfileStatsContext(LLSD& stats);
 std::string getProfileStatsFilename();
 
 void display_startup()
@@ -194,7 +192,7 @@ void display_startup()
     //
     if (!LLViewerFetchedTexture::sWhiteImagep.isNull())
     {
-    LLTexUnit::sWhiteTexture = LLViewerFetchedTexture::sWhiteImagep->getTexName();
+    ALTextureSlot::sWhiteTexture = LLViewerFetchedTexture::sWhiteImagep->getTexName();
     }
 
     LLGLSDefault gls_default;
@@ -249,8 +247,17 @@ void display_update_camera()
     // </FS:TJ>
     if (gCubeSnapshot)
     {
-        static LLCachedControl<F32> reflection_probe_draw_distance(gSavedSettings, "RenderReflectionProbeDrawDistance", 64.f);
-        final_far = reflection_probe_draw_distance();
+        if (gPipeline.mHeroProbeManager.isMirrorPass())
+        {
+            // mirrors are literal reflections and get their own render distance
+            static LLCachedControl<F32> hero_probe_distance(gSavedSettings, "RenderHeroProbeDistance", 8.f);
+            final_far = hero_probe_distance();
+        }
+        else
+        {
+            static LLCachedControl<F32> reflection_probe_draw_distance(gSavedSettings, "RenderReflectionProbeDrawDistance", 64.f);
+            final_far = reflection_probe_draw_distance();
+        }
     }
     else if (CAMERA_MODE_CUSTOMIZE_AVATAR == gAgentCamera.getCameraMode())
     {
@@ -342,6 +349,8 @@ static void update_tp_display(bool minimized)
         gAgent.setTeleportState(LLAgent::TELEPORT_NONE);
         gAgent.setTeleportMessage(std::string());
     }
+
+    // SKOOMA-PORT: Alchemy's progress-view floater (pProgFloater) is not ported; progress stays on gViewerWindow.
 
     // Make sure the TP progress panel gets hidden in case the viewer window
     // is minimized *during* a TP. HB
@@ -627,27 +636,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
     LLGLState::checkStates();
 
     //////////////////////////////////////////////////////////
-    //
-    // Logic for forcing window updates if we're in drone mode.
-    //
-
-    // *TODO: Investigate running display() during gHeadlessClient.  See if this early exit is needed DK 2011-02-18
-    if (gHeadlessClient)
-    {
-#if LL_WINDOWS
-        static F32 last_update_time = 0.f;
-        if ((gFrameTimeSeconds - last_update_time) > 1.f)
-        {
-            InvalidateRect((HWND)gViewerWindow->getPlatformWindow(), NULL, false);
-            last_update_time = gFrameTimeSeconds;
-        }
-#elif LL_DARWIN
-        // MBW -- Do something clever here.
-#endif
-        // Not actually rendering, don't bother.
-        return;
-    }
-
 
     //
     // Bail out if we're in the startup state and don't want to try to
@@ -942,7 +930,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         LLDrawable::incrementVisible();
 
         LLSpatialGroup::sNoDelete = true;
-        LLTexUnit::sWhiteTexture = LLViewerFetchedTexture::sWhiteImagep->getTexName();
+        ALTextureSlot::sWhiteTexture = LLViewerFetchedTexture::sWhiteImagep->getTexName();
 
         S32 occlusion = LLPipeline::sUseOcclusion;
         if (gDepthDirty)
@@ -1028,18 +1016,16 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
                 LLGLState::checkStates();
 
-                glm::mat4 proj = get_current_projection();
-                glm::mat4 mod = get_current_modelview();
+                const LLCamera saved_camera = LLViewerCamera::getCurrent();
                 glViewport(0,0,512,512);
 
                 LLVOAvatar::updateImpostors();
 
-                set_current_projection(proj);
-                set_current_modelview(mod);
+                LLViewerCamera::setCurrent(saved_camera);
                 gGL.matrixMode(LLRender::MM_PROJECTION);
-                gGL.loadMatrix(glm::value_ptr(proj));
+                gGL.loadMatrix(saved_camera.getProjection());
                 gGL.matrixMode(LLRender::MM_MODELVIEW);
-                gGL.loadMatrix(glm::value_ptr(mod));
+                gGL.loadMatrix(saved_camera.getModelview());
                 gViewerWindow->setup3DViewport();
 
                 LLGLState::checkStates();
@@ -1140,7 +1126,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         //  gGL.matrixMode(LLRender::MM_MODELVIEW);
         //  gGL.pushMatrix();
         //  {
-        //      gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        //      gGL.getTextureSlot(0)->unbind();
 
         //      glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_TRUE);
         //      gGL.loadIdentity();
@@ -1208,6 +1194,8 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             static LLCachedControl<bool> render_depth_pre_pass(gSavedSettings, "RenderDepthPrePass", false);
             if (render_depth_pre_pass)
             {
+                LLGLDepthTest depth(GL_TRUE, GL_TRUE);
+                LLGLEnable cull_face(GL_CULL_FACE);
                 gGL.setColorMask(false, false);
 
                 constexpr U32 types[] = {
@@ -1235,11 +1223,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Texture Unbind");
             for (S32 i = 0; i < gGLManager.mNumTextureImageUnits; i++)
             { //dummy cleanup of any currently bound textures
-                if (gGL.getTexUnit(i)->getCurrType() != LLTexUnit::TT_NONE)
-                {
-                    gGL.getTexUnit(i)->unbind(gGL.getTexUnit(i)->getCurrType());
-                    gGL.getTexUnit(i)->disable();
-                }
+                gGL.getTextureSlot(i)->unbind();
             }
         }
 
@@ -1285,6 +1269,12 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
     stop_glerror();
 
+    // Close out the UBO streaming rings' per-frame counters (slices, wraps, GPU stalls) and let
+    // them resize. Here rather than in resetFrameStats(): a resize deletes and remaps a ring and
+    // invalidates every outstanding slice, which must land past this frame's draws, not before its
+    // heaviest passes. See ALUniformBuffer::endFrame.
+    ALUniformBuffer::endFrame();
+
     display_stats();
 
     LLAppViewer::instance()->pingMainloopTimeout("Display:Done");
@@ -1294,48 +1284,47 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
     if (gShaderProfileFrame)
     {
         gShaderProfileFrame = false;
-        boost::json::value stats{ boost::json::object_kind };
-        getProfileStatsContext(stats.as_object());
+        LLSD stats = LLSD::emptyMap();
+        getProfileStatsContext(stats);
         LLGLSLShader::finishProfile(stats);
 
         auto report_name = getProfileStatsFilename();
-        std::ofstream outf(report_name);
+        llofstream outf(report_name);
         if (! outf)
         {
             LL_WARNS() << "Couldn't write to " << std::quoted(report_name) << LL_ENDL;
         }
         else
         {
-            outf << stats;
+            outf << LlsdToJson(stats);
             LL_INFOS() << "(also dumped to " << std::quoted(report_name) << ")" << LL_ENDL;
         }
     }
 }
 
-void getProfileStatsContext(boost::json::object& stats)
+void getProfileStatsContext(LLSD& stats)
 {
     // populate the context with info from LLFloaterAbout
-    auto contextit = stats.emplace("context",
-                                   LlsdToJson(LLAppViewer::instance()->getViewerInfo())).first;
-    auto& context = contextit->value().as_object();
+    LLSD& context = stats["context"];
+    context = LLAppViewer::instance()->getViewerInfo();
 
     // then add a few more things
     unsigned char unique_id[MAC_ADDRESS_BYTES]{};
     LLMachineID::getUniqueID(unique_id, sizeof(unique_id));
-    context.emplace("machine", stringize(LL::hexdump(unique_id, sizeof(unique_id))));
-    context.emplace("grid", LLGridManager::instance().getGrid());
+    context["machine"] = stringize(LL::hexdump(unique_id, sizeof(unique_id)));
+    context["grid"] = LLGridManager::instance().getGrid();
     LLViewerRegion* region = gAgent.getRegion();
     if (region)
     {
-        context.emplace("regionid", stringize(region->getRegionID()));
+        context["regionid"] = stringize(region->getRegionID());
     }
     LLParcel* parcel = LLViewerParcelMgr::instance().getAgentParcel();
     if (parcel)
     {
-        context.emplace("parcel", parcel->getName());
-        context.emplace("parcelid", parcel->getLocalID());
+        context["parcel"] = parcel->getName();
+        context["parcelid"] = parcel->getLocalID();
     }
-    context.emplace("time", LLDate::now().toHTTPDateString("%Y-%m-%dT%H:%M:%S"));
+    context["time"] = LLDate::now().toHTTPDateString("%Y-%m-%dT%H:%M:%S");
 }
 
 std::string getProfileStatsFilename()
@@ -1498,8 +1487,7 @@ void render_hud_attachments()
     gGL.matrixMode(LLRender::MM_MODELVIEW);
     gGL.pushMatrix();
 
-    glm::mat4 current_proj = get_current_projection();
-    glm::mat4 current_mod = get_current_modelview();
+    const LLCamera saved_camera = LLViewerCamera::getCurrent();
 
     // clamp target zoom level to reasonable values
 //  gAgentCamera.mHUDTargetZoom = llclamp(gAgentCamera.mHUDTargetZoom, 0.1f, 1.f);
@@ -1513,10 +1501,7 @@ void render_hud_attachments()
     if (LLPipeline::sShowHUDAttachments && !gDisconnected && setup_hud_matrices())
     {
         LLPipeline::sRenderingHUDs = true;
-        LLCamera hud_cam = *LLViewerCamera::getInstance();
-        hud_cam.setOrigin(-1.f, 0.f, 0.f);
-        hud_cam.setAxes(LLVector3(1.f, 0.f, 0.f), LLVector3(0.f, 1.f, 0.f), LLVector3(0.f, 0.f, 1.f));
-        LLViewerCamera::updateFrustumPlanes(hud_cam, true);
+        LLCamera hud_cam = LLViewerCamera::getCurrent();
 
         static LLCachedControl<bool> render_hud_particles(gSavedSettings, "RenderHUDParticles", false);
         bool render_particles = gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_PARTICLES) && render_hud_particles;
@@ -1615,8 +1600,7 @@ void render_hud_attachments()
     gGL.matrixMode(LLRender::MM_MODELVIEW);
     gGL.popMatrix();
 
-    set_current_projection(current_proj);
-    set_current_modelview(current_mod);
+    LLViewerCamera::setCurrent(saved_camera);
 }
 
 LLRect get_whole_screen_region()
@@ -1642,7 +1626,7 @@ LLRect get_whole_screen_region()
     return whole_screen;
 }
 
-bool get_hud_matrices(const LLRect& screen_region, glm::mat4 &proj, glm::mat4&model)
+bool get_hud_matrices(const LLRect& screen_region, LLMatrix4a& proj, LLMatrix4a& model)
 {
     if (isAgentAvatarValid() && gAgentAvatarp->hasHUDAttachment())
     {
@@ -1652,31 +1636,29 @@ bool get_hud_matrices(const LLRect& screen_region, glm::mat4 &proj, glm::mat4&mo
         F32 hud_depth = llmax(1.f, hud_bbox.getExtentLocal().mV[VX] * 1.1f);
 
         // <FS:Ansariel> Factor out calls to getInstance
-        //proj = glm::ortho(-0.5f * LLViewerCamera::getInstance()->getAspect(), 0.5f * LLViewerCamera::getInstance()->getAspect(), -0.5f, 0.5f, 0.f, hud_depth);
-        //proj[2][2] = -0.01f;
-
         F32 aspect_ratio = LLViewerCamera::getInstance()->getAspect();
-        proj = glm::ortho(-0.5f * aspect_ratio, 0.5f * aspect_ratio, -0.5f, 0.5f, 0.f, hud_depth);
-        proj[2][2] = -0.01f;
-        // <//FS:Ansariel> Factor out calls to getInstance
+        // al_ortho reverses the depth row under reverse-Z (its [3][2] becomes +1), so only
+        // the flatten-hack [2][2] constant mirrors: window = 1 + 0.005*z == 1 - window_fwd,
+        // same per-unit spacing and clip budget, reversed direction.
+        proj = al_ortho(-0.5f * aspect_ratio, 0.5f * aspect_ratio, -0.5f, 0.5f, 0.f, hud_depth);
+        proj.mMatrix[2].getF32ptr()[2] = LLRender::sReverseZ ? 0.005f : -0.01f;
+        // </FS:Ansariel> Factor out calls to getInstance
 
         F32 scale_x = (F32)gViewerWindow->getWorldViewWidthScaled() / (F32)screen_region.getWidth();
         F32 scale_y = (F32)gViewerWindow->getWorldViewHeightScaled() / (F32)screen_region.getHeight();
 
-        glm::mat4 mat = glm::identity<glm::mat4>();
-        mat = glm::translate(mat,
-            glm::vec3(clamp_rescale((F32)(screen_region.getCenterX() - screen_region.mLeft), 0.f, (F32)gViewerWindow->getWorldViewWidthScaled(), 0.5f * scale_x * aspect_ratio, -0.5f * scale_x * aspect_ratio),
-                clamp_rescale((F32)(screen_region.getCenterY() - screen_region.mBottom), 0.f, (F32)gViewerWindow->getWorldViewHeightScaled(), 0.5f * scale_y, -0.5f * scale_y),
-                0.f));
-        mat = glm::scale(mat, glm::vec3(scale_x, scale_y, 1.f));
-        proj *= mat;
+        // the region scaled up to the view, then moved to its centre, ahead of the ortho
+        LLMatrix4a mat;
+        mat.setMul(LLMatrix4a::scaling(scale_x, scale_y, 1.f),
+                   LLMatrix4a::translation(clamp_rescale((F32)(screen_region.getCenterX() - screen_region.mLeft), 0.f, (F32)gViewerWindow->getWorldViewWidthScaled(), 0.5f * scale_x * aspect_ratio, -0.5f * scale_x * aspect_ratio),
+                                           clamp_rescale((F32)(screen_region.getCenterY() - screen_region.mBottom), 0.f, (F32)gViewerWindow->getWorldViewHeightScaled(), 0.5f * scale_y, -0.5f * scale_y),
+                                           0.f));
+        proj.setMul(mat, proj);
 
-        glm::mat4 tmp_model = glm::make_mat4(OGL_TO_CFR_ROTATION);
-        mat = glm::identity<glm::mat4>();
-        mat = glm::translate(mat, glm::vec3(-hud_bbox.getCenterLocal().mV[VX] + (hud_depth * 0.5f), 0.f, 0.f));
-        mat = glm::scale(mat, glm::vec3(zoom_level));
-        tmp_model *= mat;
-        model = tmp_model;
+        // the HUD zoomed and moved in front of the camera, then into the GL frame
+        mat.setMul(LLMatrix4a::scaling(zoom_level, zoom_level, zoom_level),
+                   LLMatrix4a::translation(-hud_bbox.getCenterLocal().mV[VX] + (hud_depth * 0.5f), 0.f, 0.f));
+        model.setMul(mat, LLMatrix4a(OGL_TO_CFR_ROTATION));
 
         return true;
     }
@@ -1686,7 +1668,7 @@ bool get_hud_matrices(const LLRect& screen_region, glm::mat4 &proj, glm::mat4&mo
     }
 }
 
-bool get_hud_matrices(glm::mat4 &proj, glm::mat4&model)
+bool get_hud_matrices(LLMatrix4a& proj, LLMatrix4a& model)
 {
     LLRect whole_screen = get_whole_screen_region();
     return get_hud_matrices(whole_screen, proj, model);
@@ -1700,18 +1682,26 @@ bool setup_hud_matrices()
 
 bool setup_hud_matrices(const LLRect& screen_region)
 {
-    glm::mat4 proj, model;
+    LLMatrix4a proj, model;
     bool result = get_hud_matrices(screen_region, proj, model);
     if (!result) return result;
 
     // set up transform to keep HUD objects in front of camera
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.loadMatrix(glm::value_ptr(proj));
-    set_current_projection(proj);
+    gGL.loadMatrix(proj);
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.loadMatrix(glm::value_ptr(model));
-    set_current_modelview(model);
+    gGL.loadMatrix(model);
+
+    // the HUD's camera: at the HUD's origin looking along +x, with the
+    // HUD's matrices and the frustum they give
+    LLCamera hud_cam = *LLViewerCamera::getInstance();
+    hud_cam.setOrigin(-1.f, 0.f, 0.f);
+    hud_cam.setAxes(LLVector3(1.f, 0.f, 0.f), LLVector3(0.f, 1.f, 0.f), LLVector3(0.f, 0.f, 1.f));
+    hud_cam.setProjection(proj);
+    hud_cam.setModelview(model);
+    LLViewerCamera::updateFrustumPlanes(hud_cam, true);
+    LLViewerCamera::setCurrent(hud_cam);
     return true;
 }
 
@@ -1722,13 +1712,14 @@ void render_ui(F32 zoom_factor, int subfield)
     LL_PROFILE_GPU_ZONE("ui");
     LLGLState::checkStates();
 
-    glm::mat4 saved_view = get_current_modelview();
+    // the world camera, as the scene just rendered with it
+    const LLCamera saved_camera = LLViewerCamera::getCurrent();
 
     if (!gSnapshot)
     {
         gGL.pushMatrix();
-        gGL.loadMatrix(gGLLastModelView);
-        set_current_modelview(glm::make_mat4(gGLLastModelView));
+        gGL.loadMatrix(LLViewerCamera::getInstance()->getModelview());
+        LLViewerCamera::setCurrent(*LLViewerCamera::getInstance());
     }
 
     if(LLSceneMonitor::getInstance()->needsUpdate())
@@ -1755,14 +1746,14 @@ void render_ui(F32 zoom_factor, int subfield)
 
 
         LL_PROFILE_ZONE_NAMED_CATEGORY_UI("HUD");
-    render_hud_elements();
+        render_hud_elements();
+        LLGLState::checkStates();
 // [RLVa:KB] - Checked: RLVa-2.2 (@setoverlay)
         if (RlvActions::hasBehaviour(RLV_BHVR_SETOVERLAY))
         {
             LLVfxManager::instance().runEffect(EVisualEffect::RlvOverlay);
         }
 // [/RLVa:KB]
-        LLGLState::checkStates();
         render_hud_attachments();
 
         LLGLState::checkStates();
@@ -1815,7 +1806,7 @@ void render_ui(F32 zoom_factor, int subfield)
 
     if (!gSnapshot)
     {
-        set_current_modelview(saved_view);
+        LLViewerCamera::setCurrent(saved_camera);
         gGL.popMatrix();
     }
 }
@@ -1834,7 +1825,7 @@ void swap()
 
 void renderCoordinateAxes()
 {
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
     gGL.begin(LLRender::LINES);
         gGL.color3f(1.0f, 0.0f, 0.0f);   // i direction = X-Axis = red
         gGL.vertex3f(0.0f, 0.0f, 0.0f);
@@ -1885,7 +1876,7 @@ void renderCoordinateAxes()
 void draw_axes()
 {
     LLGLSUIDefault gls_ui;
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
     // A vertical white line at origin
     LLVector3 v = gAgent.getPositionAgent();
     gGL.begin(LLRender::LINES);
@@ -2114,7 +2105,7 @@ void render_ui_2d()
         LLGLDisable blend(GL_BLEND);
         S32 width = gViewerWindow->getWindowWidthScaled();
         S32 height = gViewerWindow->getWindowHeightScaled();
-        gGL.getTexUnit(0)->bind(&gPipeline.mUIScreen);
+        gGL.getTextureSlot(0)->bind(&gPipeline.mUIScreen);
         gGL.begin(LLRender::TRIANGLE_STRIP);
         gGL.color4f(1.f,1.f,1.f,1.f);
         gGL.texCoord2f(0.f, 0.f);                 gGL.vertex2i(0, 0);
@@ -2178,7 +2169,7 @@ void render_disconnected_background()
         raw->expandToPowerOfTwo();
         gDisconnectedImagep = LLViewerTextureManager::getLocalTexture(raw.get(), false);
         gStartTexture = gDisconnectedImagep;
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
     }
 
     // Make sure the progress view always fills the entire window.
@@ -2197,10 +2188,10 @@ void render_disconnected_background()
             const LLVector2& display_scale = gViewerWindow->getDisplayScale();
             gGL.scalef(display_scale.mV[VX], display_scale.mV[VY], 1.f);
 
-            gGL.getTexUnit(0)->bind(gDisconnectedImagep);
+            gGL.getTextureSlot(0)->bindSampled(gDisconnectedImagep, ALSamplers::AnisoWrap);
             gGL.color4f(1.f, 1.f, 1.f, 1.f);
             gl_rect_2d_simple_tex(width, height);
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTextureSlot(0)->unbind();
         }
         gGL.popMatrix();
     }

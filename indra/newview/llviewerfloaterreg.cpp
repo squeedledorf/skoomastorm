@@ -80,7 +80,6 @@
 #include "llfloaterfonttest.h"
 #include "llfloaterforgetuser.h"
 #include "llfloatergesture.h"
-#include "llfloatergltfasseteditor.h"
 #include "llfloatergodtools.h"
 #include "llfloatergridstatus.h"
 #include "llfloatergroups.h"
@@ -190,6 +189,8 @@
 #include "rlvfloaters.h"
 // [/RLVa:KB]
 // ND: And for FS please put yours after this line, for easier merges too
+#include "alfloaterlightbox.h"
+#include "alfloaterscopes.h"
 #include "alfloaterregiontracker.h"
 #include "animationexplorer.h"
 #include "ao.h"
@@ -291,7 +292,6 @@ public:
                 "camera_presets",
                 "delete_pref_preset",
                 "forget_username",
-                "gltf_asset_editor",
                 "god_tools",
                 "group_picker",
                 "hud",
@@ -334,7 +334,6 @@ public:
                 "env_edit_extdaycycle",
                 "font_test",
                 "forget_username",
-                "gltf_asset_editor",
                 "god_tools",
                 "group_picker",
                 "hud",
@@ -484,7 +483,6 @@ void LLViewerFloaterReg::registerFloaters()
     //LLFloaterReg::add("forget_username", "floater_forget_user.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterForgetUser>);
 
     LLFloaterReg::add("gestures", "floater_gesture.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterGesture>);
-    LLFloaterReg::add("gltf_asset_editor", "floater_gltf_asset_editor.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterGLTFAssetEditor>);
     LLFloaterReg::add("god_tools", "floater_god_tools.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterGodTools>);
     LLFloaterReg::add("grid_status", "floater_grid_status.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterGridStatus>);
     LLFloaterReg::add("group_picker", "floater_choose_group.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterGroupPicker>);
@@ -720,6 +718,8 @@ void LLViewerFloaterReg::registerFloaters()
 	// <FS:William_W:FixPhototoolsTypo> [PhotoTools] Corrected typo in Phototools floater registration - using string literal instead of PHOTOTOOLS_FLOATER constant (likely intended).
 	// LLFloaterReg::add(PHOTOTOOLS_FLOATER, "floater_phototools.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FloaterQuickPrefs>); // Original line with likely typo
 	LLFloaterReg::add("phototools", "floater_phototools.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FloaterQuickPrefs>); // Corrected line - using string literal "phototools"
+    LLFloaterReg::add("lightbox", "floater_lightbox_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterLightBox>); // <AL/>
+    LLFloaterReg::add("scopes", "floater_scopes.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterScopes>); // <AL/>
     LLFloaterReg::add("phototools_camera", "floater_phototools_camera.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterCamera>);
     LLFloaterReg::add("quickprefs", "floater_quickprefs.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FloaterQuickPrefs>);
     LLFloaterReg::add("region_tracker", "floater_region_tracker.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterRegionTracker>);

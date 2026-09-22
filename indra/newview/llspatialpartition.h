@@ -48,6 +48,7 @@
 //</FS:Beq>
 #include <queue>
 #include <unordered_map>
+#include <boost/unordered_map.hpp>
 
 #define SG_STATE_INHERIT_MASK (OCCLUDED)
 #define SG_INITIAL_STATE_MASK (static_cast<U32>(DIRTY) | static_cast<U32>(GEOM_DIRTY))
@@ -77,9 +78,8 @@ void render_hull_with_outline(LLModel::PhysicsMesh& mesh, const LLColor4& color,
     Make every effort to keep size minimal.
     Member ordering is important for cache coherency
 */
-class LLDrawInfo final : public LLRefCount
+class alignas(16) LLDrawInfo final : public LLRefCount
 {
-    LL_ALIGN_NEW;
 protected:
     ~LLDrawInfo();
 
@@ -113,7 +113,7 @@ public:
     const LLMatrix4* mSpecularMapMatrix = nullptr;
     const LLMatrix4* mNormalMapMatrix = nullptr;
     const LLMatrix4* mTextureMatrix = nullptr;
-    const LLMatrix4* mModelMatrix = nullptr;
+    const LLMatrix4a* mModelMatrix = nullptr;
 
     LLPointer<LLVOAvatar> mAvatar = nullptr;
     LLConstPointer<LLMeshSkinInfo> mSkinInfo;// <FS:Beq/> be defensive about UAF with skinInfo during LocalMesh
@@ -123,6 +123,28 @@ public:
 
     // PBR material parameters
     LLPointer<LLFetchedGLTFMaterial> mGLTFMaterial;
+
+    // Indexed (multi-material) GLTF PBR batching: when size() > 1 this draw call
+    // covers several materials, selected per-vertex by the texture_index attribute
+    // (the material slot). Slot s binds its four maps to texture units
+    // [s, N+s, 2N+s, 3N+s] where N == mGLTFMaterialList.size(). Empty for the
+    // single-material path (which uses mGLTFMaterial above).
+    std::vector<LLPointer<LLFetchedGLTFMaterial> > mGLTFMaterialList;
+
+    // Indexed (multi-material) legacy Blinn-Phong batching: one entry per material
+    // slot (the texture_index attribute), parallel to the GLTF list above but for
+    // the POOL_MATERIALS path. Empty unless this is a multi-material legacy batch.
+    struct MaterialSlot
+    {
+        LLPointer<LLViewerTexture> mDiffuse;
+        LLPointer<LLViewerTexture> mNormalMap;
+        LLPointer<LLViewerTexture> mSpecularMap;
+        LLVector4 mSpecColor = LLVector4(1.f, 1.f, 1.f, 0.5f); // XYZ = specular RGB, W = glossiness
+        F32 mEnvIntensity = 0.f;
+        F32 mAlphaMaskCutoff = 0.5f;
+        F32 mFullbright = 0.f;
+    };
+    std::vector<MaterialSlot> mMaterialSlotList;
 
     LLVector4 mSpecColor = LLVector4(1.f, 1.f, 1.f, 0.5f); // XYZ = Specular RGB, W = Specular Exponent
 
@@ -203,12 +225,12 @@ public:
     };
 };
 
-LL_ALIGN_PREFIX(16)
-class LLSpatialGroup : public LLOcclusionCullingGroup
+class alignas(16) LLSpatialGroup : public LLOcclusionCullingGroup
 {
     using super = LLOcclusionCullingGroup;
     friend class LLSpatialPartition;
     friend class LLOctreeStateCheck;
+
 public:
 
     LLSpatialGroup(const LLSpatialGroup& rhs) = delete;
@@ -220,10 +242,10 @@ public:
     typedef std::vector<LLPointer<LLSpatialGroup> > sg_vector_t;
     typedef std::vector<LLPointer<LLSpatialBridge> > bridge_list_t;
     typedef std::vector<LLPointer<LLDrawInfo> > drawmap_elem_t;
-    typedef std::unordered_map<U32, drawmap_elem_t > draw_map_t;
+    typedef boost::unordered_map<U32, drawmap_elem_t > draw_map_t;
     typedef std::vector<LLPointer<LLVertexBuffer> > buffer_list_t;
-    typedef std::unordered_map<LLFace*, buffer_list_t> buffer_texture_map_t;
-    typedef std::unordered_map<U32, buffer_texture_map_t> buffer_map_t;
+    typedef boost::unordered_map<LLFace*, buffer_list_t> buffer_texture_map_t;
+    typedef boost::unordered_map<U32, buffer_texture_map_t> buffer_map_t;
 
     struct CompareDistanceGreater
     {
@@ -335,8 +357,8 @@ public:
     virtual void rebound();
 
 public:
-    LL_ALIGN_16(LLVector4a mViewAngle);
-    LL_ALIGN_16(LLVector4a mLastUpdateViewAngle);
+    LLVector4a mViewAngle;
+    LLVector4a mLastUpdateViewAngle;
 
 protected:
     virtual ~LLSpatialGroup();
@@ -366,7 +388,7 @@ public:
     U32 mRenderOrder = 0;
     // Reflection Probe associated with this node (if any)
     LLPointer<LLReflectionMap> mReflectionProbe = nullptr;
-} LL_ALIGN_POSTFIX(16);
+};
 
 class LLGeometryManager
 {
@@ -488,19 +510,19 @@ public:
     typedef LLDrawInfo** drawinfo_iterator;
     typedef LLDrawable** drawable_iterator;
 
-    // Helper function for taking advantage of _mm_prefetch when iterating over cull results
+    // Prefetches the vertex buffers of the draw infos about to be walked
     static inline void increment_iterator(LLCullResult::drawinfo_iterator& i, const LLCullResult::drawinfo_iterator& end)
     {
         ++i;
 
         if (i != end)
         {
-            _mm_prefetch((char*)(*i)->mVertexBuffer.get(), _MM_HINT_NTA);
+            alsimd::prefetch_nta((*i)->mVertexBuffer.get());
 
             auto* ni = i + 1;
             if (ni != end)
             {
-                _mm_prefetch((char*)*ni, _MM_HINT_NTA);
+                alsimd::prefetch_nta(*ni);
             }
         }
     }
@@ -675,8 +697,10 @@ class LLVolumeGeometryManager: public LLGeometryManager
     virtual void rebuildMesh(LLSpatialGroup* group);
     virtual void getGeometry(LLSpatialGroup* group);
     virtual void addGeometryCount(LLSpatialGroup* group, U32& vertex_count, U32& index_count);
-    U32 genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace** faces, U32 face_count, bool distance_sort = false, bool batch_textures = false, bool rigged = false);
-    void registerFace(LLSpatialGroup* group, LLFace* facep, U32 type);
+    U32 genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace** faces, U32 face_count, bool distance_sort = false, bool batch_textures = false, bool rigged = false, bool batch_gltf = false, bool batch_legacy = false);
+    // material_slot: the face's texture index is a material slot from the indexed
+    // accumulation in genDrawInfo, not a texture index
+    void registerFace(LLSpatialGroup* group, LLFace* facep, U32 type, bool material_slot);
 
 private:
     void allocateFaces(U32 pMaxFaceCount);

@@ -373,6 +373,15 @@ void LLColorSwatchCtrl::setValid(bool valid )
 
 void LLColorSwatchCtrl::showPicker(bool take_focus)
 {
+    if (mPickerOverride && mPickerOverride(this))
+    {
+        return;
+    }
+    showClassicPicker(take_focus);
+}
+
+void LLColorSwatchCtrl::showClassicPicker(bool take_focus)
+{
     LLFloaterColorPicker* pickerp = (LLFloaterColorPicker*)mPickerHandle.get();
     if (!pickerp)
     {

@@ -47,7 +47,8 @@ vec4 decodeNormal(vec4 norm);
 
 // syncMatrices uploads this from the gGL projection stack whenever the shader declares it; the occlusion needs it to
 // put a view-space sample point back on screen.
-uniform mat4 projection_matrix;
+// <SS:Nexii> SKOOMA-PORT: engine UBO (was loose uniforms) - spliced from class1/deferred/matricesBlock.glsl
+//[ENGINE_BLOCK Matrices]
 
 // ---------------------------------------------------------------------------
 // The core's constants, transliterated from ssinfolookcore.h. LOCKSTEP: the twin parses these lines.

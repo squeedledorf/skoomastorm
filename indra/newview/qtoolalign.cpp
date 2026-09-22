@@ -121,8 +121,8 @@ bool QToolAlign::findSelectedManipulator(S32 x, S32 y)
     {
         transform.initAll(LLVector3(1.f, 1.f, 1.f), mBBox.getRotation(), mBBox.getCenterAgent());
 
-        LLMatrix4 projection_matrix = camera->getProjection();
-        LLMatrix4 model_matrix = camera->getModelview();
+        LLMatrix4 projection_matrix(camera->getProjection().getF32ptr()); // SKOOMA-PORT: camera matrices are LLMatrix4a
+        LLMatrix4 model_matrix(camera->getModelview().getF32ptr());
 
         transform *= model_matrix;
         transform *= projection_matrix;
@@ -374,9 +374,8 @@ void QToolAlign::render()
         // Draw bounding box
         LLGLSUIDefault gls_ui;
         LLGLEnable gl_blend(GL_BLEND);
-        LLGLEnable gls_alpha_test(GL_ALPHA_TEST);
         LLGLDepthTest gls_depth(GL_FALSE);
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
 
         // render box
         LLColor4 default_normal_color( 0.7f, 0.7f, 0.7f, 0.1f );

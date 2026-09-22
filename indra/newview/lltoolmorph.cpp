@@ -78,7 +78,7 @@ LLVisualParamHint::LLVisualParamHint(
     F32 param_weight,
     LLJoint* jointp)
     :
-    LLViewerDynamicTexture(width, height, 3, LLViewerDynamicTexture::ORDER_MIDDLE, true ),
+    LLViewerDynamicTexture(width, height, 3, LLViewerDynamicTexture::ORDER_MIDDLE),
     mNeedsUpdate( true ),
     mIsVisible( false ),
     mJointMesh( mesh ),
@@ -283,10 +283,10 @@ bool LLVisualParamHint::render()
     gGL.flush();
 
     LLViewerCamera::getInstance()->setAspect((F32)mFullWidth / (F32)mFullHeight);
-    LLViewerCamera::getInstance()->setOriginAndLookAt(
+    LLViewerCamera::getInstance()->lookAt(
         camera_pos,         // camera
-        LLVector3::z_axis,  // up
-        target_pos );       // point of interest
+        target_pos, // point of interest
+        LLVector3::z_axis); // up
 
     LLViewerCamera::getInstance()->setPerspective(false, mOrigin.mX, mOrigin.mY, mFullWidth, mFullHeight, false);
 
@@ -333,7 +333,7 @@ void LLVisualParamHint::draw(F32 alpha)
 {
     if (!mIsVisible) return;
 
-    gGL.getTexUnit(0)->bind(this);
+    gGL.getTextureSlot(0)->bindSampled(this, ALSamplers::AnisoClamp);
 
     gGL.color4f(1.f, 1.f, 1.f, alpha);
 
@@ -356,13 +356,13 @@ void LLVisualParamHint::draw(F32 alpha)
     }
     gGL.end();
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 }
 
 //-----------------------------------------------------------------------------
 // LLVisualParamReset()
 //-----------------------------------------------------------------------------
-LLVisualParamReset::LLVisualParamReset() : LLViewerDynamicTexture(1, 1, 1, ORDER_RESET, false)
+LLVisualParamReset::LLVisualParamReset() : LLViewerDynamicTexture(1, 1, 1, ORDER_RESET)
 {
 }
 

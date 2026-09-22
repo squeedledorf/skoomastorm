@@ -35,7 +35,8 @@ out vec4 frag_color;
 uniform sampler2D diffuseRect;
 uniform sampler2D depthMap;
 
-uniform mat4 inv_proj;
+// <SS:Nexii> SKOOMA-PORT: engine UBO (was loose uniforms) - spliced from class1/deferred/matricesBlock.glsl
+//[ENGINE_BLOCK Matrices]
 uniform vec2 screen_res;
 
 uniform float ssHeatStrength;

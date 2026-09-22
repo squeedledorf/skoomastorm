@@ -1729,7 +1729,7 @@ void SSNavMesh::renderDebug(bool force_navmesh)
     LLGLDepthTest depth(GL_TRUE, opaque ? GL_TRUE : GL_FALSE);
     LLGLDisable cull(GL_CULL_FACE);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     // The marked spot: a magenta post with a cross at the mark, so a dump and the view line up.
     if (mHasMark)

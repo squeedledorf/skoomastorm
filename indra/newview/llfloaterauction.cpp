@@ -154,7 +154,7 @@ void LLFloaterAuction::draw()
         {
             LLRect rect = snapshot_icon->getRect();
             {
-                gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                gGL.getTextureSlot(0)->unbind();
                 gl_rect_2d(rect, LLColor4(0.f, 0.f, 0.f, 1.f));
                 rect.stretch(-1);
             }
@@ -223,8 +223,7 @@ void LLFloaterAuction::onClickSnapshot(void* data)
         j2c_file.write(j2c->getData(), j2c->getDataSize());
 
         self->mImage = LLViewerTextureManager::getLocalTexture((LLImageRaw*)raw, false);
-        gGL.getTexUnit(0)->bind(self->mImage);
-        self->mImage->setAddressMode(LLTexUnit::TAM_CLAMP);
+        gGL.getTextureSlot(0)->bindSampled(self->mImage, ALSamplers::AnisoWrap);
     }
     else
     {

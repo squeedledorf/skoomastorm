@@ -32,7 +32,6 @@
 #include "llfasttimer.h"
 #include "llrender.h"
 
-#include "llapr.h"
 #include "llbox.h"
 #include "lldrawable.h"
 #include "lldrawpoolavatar.h"
@@ -55,12 +54,6 @@
 #include "m4math.h"
 #include "llmatrix4a.h"
 #include "llperfstats.h"
-
-#if !LL_DARWIN && !LL_LINUX
-extern PFNGLWEIGHTPOINTERARBPROC glWeightPointerARB;
-extern PFNGLWEIGHTFVARBPROC glWeightfvARB;
-extern PFNGLVERTEXBLENDARBPROC glVertexBlendARB;
-#endif
 
 //-----------------------------------------------------------------------------
 //-----------------------------------------------------------------------------
@@ -108,14 +101,16 @@ void LLViewerJointMesh::uploadJointMatrices()
     LLPolyMesh *reference_mesh = mMesh->getReferenceMesh();
 
     //calculate joint matrices
+    LLMatrix4a model_view;
+    model_view.loadu(&LLDrawPoolAvatar::getModelView().mMatrix[0][0]);
     size_t num_joints = llmin(reference_mesh->mJointRenderData.size(), LL_CHARACTER_MAX_JOINTS_PER_MESH);
     for (joint_num = 0; joint_num < num_joints; joint_num++)
     {
-        LLMatrix4 joint_mat = *reference_mesh->mJointRenderData[joint_num]->mWorldMatrix;
-
-        joint_mat *= LLDrawPoolAvatar::getModelView();
-        gJointMatUnaligned[joint_num] = joint_mat;
-        gJointRotUnaligned[joint_num] = joint_mat.getMat3();
+        // joint to world to eye, in registers; only the result is stored
+        LLMatrix4a joint_mat;
+        joint_mat.setMulNoAlias(reference_mesh->mJointRenderData[joint_num]->mJoint->getWorldMatrix(), model_view);
+        gJointMatUnaligned[joint_num] = joint_mat.toMatrix4();
+        gJointRotUnaligned[joint_num] = gJointMatUnaligned[joint_num].getMat3();
     }
 
     bool last_pivot_uploaded{ false };
@@ -236,17 +231,26 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
 
     stop_glerror();
 
-    LLGLSSpecular specular(LLColor4(1.f,1.f,1.f,1.f), 0.f);
-
     //----------------------------------------------------------------
     // setup current texture
     //----------------------------------------------------------------
     llassert( !(mTexture.notNull() && mLayerSet) );  // mutually exclusive
 
     LLViewerTexLayerSet *layerset = dynamic_cast<LLViewerTexLayerSet*>(mLayerSet);
+
+    // The avatar skin composite (and the stand-in diffuse below) is an sRGB texture. Decode
+    // it on the sampler when the bound program shades in linear -- the deferred avatar writer
+    // and the forward avatar-skin alpha both do (mLinearDiffuse), and both had their in-shader
+    // decode removed, so the decode has to happen here or the skin reads too bright. The
+    // deferred writer's gbuffer store re-encodes via FRAMEBUFFER_SRGB (see LLDrawPoolAvatar).
+    const LLGLSLShader* bound = LLGLSLShader::sCurBoundShaderPtr;
+    const ALSampler skin_key = (bound && bound->mLinearDiffuse)
+                             ? ALSamplers::AnisoWrapSRGB
+                             : ALSamplers::AnisoWrap;
+
     if (mTestImageName)
     {
-        gGL.getTexUnit(diffuse_channel)->bindManual(LLTexUnit::TT_TEXTURE, mTestImageName);
+        gGL.getTextureSlot(diffuse_channel)->bindManual(ALTextureSlot::TT_TEXTURE, mTestImageName);
 
         if (mIsTransparent)
         {
@@ -261,20 +265,20 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
     {
         if( layerset->hasComposite() )
         {
-            gGL.getTexUnit(diffuse_channel)->bind(layerset->getViewerComposite());
+            gGL.getTextureSlot(diffuse_channel)->bindSampled(layerset->getViewerComposite(), skin_key);
         }
         else
         {
-            gGL.getTexUnit(diffuse_channel)->bind(LLViewerTextureManager::getFetchedTexture(IMG_DEFAULT));
+            gGL.getTextureSlot(diffuse_channel)->bindSampled(LLViewerTextureManager::getFetchedTexture(IMG_DEFAULT), skin_key);
         }
     }
     else if ( !is_dummy && mTexture.notNull() )
     {
-        gGL.getTexUnit(diffuse_channel)->bind(mTexture);
+        gGL.getTextureSlot(diffuse_channel)->bindSampled(mTexture, skin_key);
     }
     else
     {
-        gGL.getTexUnit(diffuse_channel)->bind(LLViewerTextureManager::getFetchedTexture(IMG_DEFAULT));
+        gGL.getTextureSlot(diffuse_channel)->bindSampled(LLViewerTextureManager::getFetchedTexture(IMG_DEFAULT), skin_key);
     }
 
     U32 start = mMesh->mFaceVertexOffset;
@@ -297,7 +301,7 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
     else
     {
         gGL.pushMatrix();
-        LLMatrix4 jointToWorld = getWorldMatrix();
+        LLMatrix4 jointToWorld = getWorldMatrix().toMatrix4();
         gGL.multMatrix((GLfloat*)jointToWorld.mMatrix);
         buff->setBuffer();
         buff->drawRange(LLRender::TRIANGLES, start, end, count, offset);

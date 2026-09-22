@@ -42,12 +42,23 @@ public:
 
     void checkState();
 
+    // Reverse-Z depth-func translation. The tracked state (sDepthFunc) and every call
+    // site stay in the forward/semantic convention; the physical glDepthFunc is fed the
+    // translated func so a call site asking for "nearer wins" keeps that meaning under
+    // reverse-Z. Identity unless LLRender::sReverseZ. LESS<->GREATER, LEQUAL<->GEQUAL;
+    // EQUAL/NOTEQUAL/ALWAYS/NEVER pass through unchanged.
+    static GLenum remap(GLenum func);
+    // Re-issue the physical depth func for the current translation. Call after
+    // LLRender::sReverseZ changes so the GL state agrees with the (unchanged) semantic
+    // static -- the ambient func was issued under the old translation.
+    static void rebase();
+
     GLboolean mPrevDepthEnabled;
     GLenum mPrevDepthFunc;
     GLboolean mPrevWriteEnabled;
 private:
     static GLboolean sDepthEnabled; // defaults to GL_FALSE
-    static GLenum sDepthFunc; // defaults to GL_LESS
+    static GLenum sDepthFunc; // defaults to GL_LESS (semantic/forward convention)
     static GLboolean sWriteEnabled; // defaults to GL_TRUE
 };
 
@@ -153,6 +164,38 @@ public:
     LLGLEnable mBlend;
 };
 
+// Scoped colour write mask: restores whatever was in force, not a hardcoded convention.
+//
+// The write mask is ambient state with two live conventions in the tree -- the G-buffer
+// pools want all four channels, the post-deferred passes want colour-on/alpha-off -- so a
+// block that set it and then "restored" a literal was only correct in the pass it was
+// written for. Anything that runs in both (the avatar multi-pass hair/skirt path, which an
+// impostor bake drives through the G-buffer) has to hand back what it was given.
+class LLGLSColorMask
+{
+public:
+    LLGLSColorMask(bool writeColorR, bool writeColorG, bool writeColorB, bool writeAlpha)
+    {
+        gGL.getColorMask(mPrev);
+        gGL.setColorMask(writeColorR, writeColorG, writeColorB, writeAlpha);
+    }
+
+    LLGLSColorMask(bool writeColor, bool writeAlpha)
+    :   LLGLSColorMask(writeColor, writeColor, writeColor, writeAlpha)
+    { }
+
+    ~LLGLSColorMask()
+    {
+        gGL.setColorMask(mPrev[0], mPrev[1], mPrev[2], mPrev[3]);
+    }
+
+    LLGLSColorMask(const LLGLSColorMask&) = delete;
+    LLGLSColorMask& operator=(const LLGLSColorMask&) = delete;
+
+private:
+    bool mPrev[4];
+};
+
 class LLGLSTracker
 {
 protected:
@@ -162,33 +205,6 @@ public:
         mCullFace(GL_CULL_FACE),
         mBlend(GL_BLEND)
     { }
-};
-
-//----------------------------------------------------------------------------
-
-class LLGLSSpecular
-{
-public:
-    F32 mShininess;
-    LLGLSSpecular(const LLColor4& color, F32 shininess)
-    {
-        mShininess = shininess;
-        if (mShininess > 0.0f)
-        {
-            glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, color.mV);
-            S32 shiny = (S32)(shininess*128.f);
-            shiny = llclamp(shiny,0,128);
-            glMateriali(GL_FRONT_AND_BACK, GL_SHININESS, shiny);
-        }
-    }
-    ~LLGLSSpecular()
-    {
-        if (mShininess > 0.f)
-        {
-            glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, LLColor4(0.f,0.f,0.f,0.f).mV);
-            glMateriali(GL_FRONT_AND_BACK, GL_SHININESS, 0);
-        }
-    }
 };
 
 //----------------------------------------------------------------------------

@@ -36,7 +36,6 @@
 
 class alignas(16) LLVolumeTriangle : public LLRefCount
 {
-    LL_ALIGN_NEW
 public:
     LLVolumeTriangle()
     {
@@ -53,7 +52,7 @@ public:
 
     }
 
-    LL_ALIGN_16(LLVector4a mPositionGroup);
+    LLVector4a mPositionGroup;
 
     const LLVector4a* mV[3];
     U32 mIndex[3];
@@ -73,7 +72,6 @@ public:
 
 class alignas(16) LLVolumeOctreeListener : public LLOctreeListener<LLVolumeTriangle, LLVolumeTriangle*>
 {
-    LL_ALIGN_NEW
 public:
     LLVolumeOctreeListener(LLOctreeNode<LLVolumeTriangle, LLVolumeTriangle*>* node);
     ~LLVolumeOctreeListener();
@@ -91,8 +89,8 @@ public:
 
 
 public:
-    LL_ALIGN_16(LLVector4a mBounds[2]); // bounding box (center, size) of this node and all its children (tight fit to objects)
-    LL_ALIGN_16(LLVector4a mExtents[2]); // extents (min, max) of this node and all its children
+    LLVector4a mBounds[2]; // bounding box (center, size) of this node and all its children (tight fit to objects)
+    LLVector4a mExtents[2]; // extents (min, max) of this node and all its children
 };
 
 class LLOctreeTriangleRayIntersect : public LLOctreeTraveler<LLVolumeTriangle, LLVolumeTriangle*>

@@ -141,8 +141,8 @@ bool LLVOWater::updateGeometry(LLDrawable *drawable)
     S32 size_y = LLPipeline::sRenderTransparentWater ? 8 : 1;
 
     const LLVector3& scale = getScale();
-    size_x *= (S32)llmin(llround(scale.mV[0] / 256.f), 8);
-    size_y *= (S32)llmin(llround(scale.mV[1] / 256.f), 8);
+    size_x *= (S32)llmin(ll_round(scale.mV[0] / 256.f), 8);
+    size_y *= (S32)llmin(ll_round(scale.mV[1] / 256.f), 8);
 
     // <SS:Nexii> A patch under ~128m rounds to ZERO quads above, and the zero-size buffer path dangles in the mapped-buffer flush list (access violation under movePartition). One quad is a valid mesh at any scale.
     size_x = llmax(size_x, 1);
@@ -189,8 +189,8 @@ bool LLVOWater::updateGeometry(LLDrawable *drawable)
 
     // <SS:Nexii> Quads come off one rounded origin plus whole steps, not a rounded centre offset by half a step. Rounding each centre moved neighbours independently by up to half a metre whenever the step was fractional (step is scale/size, size capped at 64, so any patch not a multiple of 64m), tearing seams through the void water at long draw distances. Neighbours now share the exact edge coordinate.
     LLVector3 origin_agent = getPositionAgent() - getScale() * 0.5f;
-    origin_agent.mV[VX] = (F32)llround(origin_agent.mV[VX]);
-    origin_agent.mV[VY] = (F32)llround(origin_agent.mV[VY]);
+    origin_agent.mV[VX] = (F32)ll_round(origin_agent.mV[VX]);
+    origin_agent.mV[VY] = (F32)ll_round(origin_agent.mV[VY]);
 
     for (y = 0; y < size_y; y++)
     {

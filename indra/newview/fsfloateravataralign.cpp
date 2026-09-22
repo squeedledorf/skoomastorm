@@ -111,7 +111,7 @@ void FSAvatarAlignBase::drawCompass()
     F32 cy = lo.cy;
     F32 fR = (F32)lo.R;
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     // Background circle
     gGL.color4f(0.08f, 0.08f, 0.10f, 0.90f);

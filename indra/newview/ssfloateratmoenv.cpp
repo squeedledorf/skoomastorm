@@ -3912,7 +3912,7 @@ namespace
     // does not, so an arc drawn straight after a textured widget takes that widget's texture.
     void ssStripDome(S32 x, S32 y, F32 radius, const LLColor4& colour)
     {
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
         gGL.color4fv(colour.mV);
         gl_arc_2d((F32)x, (F32)y, radius, 14, true, 0.f, F_PI);
     }

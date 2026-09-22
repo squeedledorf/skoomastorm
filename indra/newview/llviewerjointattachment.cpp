@@ -61,7 +61,7 @@ LLViewerJointAttachment::LLViewerJointAttachment() :
     mPieSlice(-1)
 {
     mValid = false;
-    mUpdateXform = false;
+    setUpdateXform(false);
     mAttachedObjects.clear();
 }
 
@@ -234,7 +234,7 @@ bool LLViewerJointAttachment::addObject(LLViewerObject* object)
         }
     }
     calcLOD();
-    mUpdateXform = true;
+    setUpdateXform(true);
 
     return true;
 }
@@ -335,7 +335,7 @@ void LLViewerJointAttachment::removeObject(LLViewerObject *object)
     }
     if (mAttachedObjects.size() == 0)
     {
-        mUpdateXform = false;
+        setUpdateXform(false);
     }
     object->setAttachmentItemID(LLUUID::null);
 }

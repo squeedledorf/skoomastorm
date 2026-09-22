@@ -69,6 +69,12 @@ constexpr S32 TOP_PANEL_HEIGHT = 30;
 
 constexpr S32 MAX_TEXTURE_SIZE = 2048 ; //max upload texture size 2048 * 2048
 
+// SKOOMA-PORT: the preview's sampling used to be set on the texture at creation; now every bind names it.
+static ALSampler preview_sampler(LLSnapshotModel::ESnapshotType type)
+{
+    return type == LLSnapshotModel::SNAPSHOT_TEXTURE ? ALSamplers::AnisoClamp : ALSamplers::PointClamp;
+}
+
 std::set<LLSnapshotLivePreview*> LLSnapshotLivePreview::sList;
 LLPointer<LLImageFormatted> LLSnapshotLivePreview::sSaveLocalImage = nullptr;
 
@@ -294,7 +300,7 @@ void LLSnapshotLivePreview::draw()
 
         LLColor4 image_color(1.f, 1.f, 1.f, 1.f);
         gGL.color4fv(image_color.mV);
-        gGL.getTexUnit(0)->bind(getCurrentImage());
+        gGL.getTextureSlot(0)->bindSampled(getCurrentImage(), preview_sampler(getSnapshotType()));
         // calculate UV scale
         F32 uv_width = isImageScaled() ? 1.f : llmin((F32)getWidth() / (F32)getCurrentImage()->getWidth(), 1.f);
         F32 uv_height = isImageScaled() ? 1.f : llmin((F32)getHeight() / (F32)getCurrentImage()->getHeight(), 1.f);
@@ -369,7 +375,7 @@ void LLSnapshotLivePreview::draw()
                 S32 y1 = 0;
                 S32 y2 = gViewerWindow->getWindowHeightScaled() + TOP_PANEL_HEIGHT;
 
-                gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                gGL.getTextureSlot(0)->unbind();
                 gGL.begin(LLRender::TRIANGLES);
                 {
                     gGL.color4f(1.f, 1.f, 1.f, 0.f);
@@ -419,7 +425,7 @@ void LLSnapshotLivePreview::draw()
             F32 alpha = clamp_rescale(fall_interp, 0.f, 1.f, 0.8f, 0.4f);
             LLColor4 image_color(1.f, 1.f, 1.f, alpha);
             gGL.color4fv(image_color.mV);
-            gGL.getTexUnit(0)->bind(mViewerImage[old_image_index]);
+            gGL.getTextureSlot(0)->bindSampled(mViewerImage[old_image_index], preview_sampler(getSnapshotType()));
             // calculate UV scale
             // *FIX get this to work with old image
             bool rescale = !mImageScaled[old_image_index] && mViewerImage[mCurImageIndex].notNull();
@@ -864,9 +870,7 @@ void LLSnapshotLivePreview::prepareFreezeFrame()
 
         mViewerImage[mCurImageIndex] = LLViewerTextureManager::getLocalTexture(scaled.get(), false);
         LLPointer<LLViewerTexture> curr_preview_image = mViewerImage[mCurImageIndex];
-        gGL.getTexUnit(0)->bind(curr_preview_image);
-        curr_preview_image->setFilteringOption(getSnapshotType() == LLSnapshotModel::SNAPSHOT_TEXTURE ? LLTexUnit::TFO_ANISOTROPIC : LLTexUnit::TFO_POINT);
-        curr_preview_image->setAddressMode(LLTexUnit::TAM_CLAMP);
+        gGL.getTextureSlot(0)->bindSampled(curr_preview_image, preview_sampler(getSnapshotType()));
 
 
         if (gSavedSettings.getBOOL("UseFreezeFrame") && mAllowFullScreenPreview)

@@ -97,7 +97,6 @@ bool SSGPUCull::active()
     if (!enabled || !supported()) return false;
     if (gCubeSnapshot
         || LLPipeline::sShadowRender
-        || LLPipeline::sReflectionRender
         || LLPipeline::sRenderingHUDs)
     {
         return false;
@@ -139,7 +138,6 @@ bool SSGPUCull::gating() const
         && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD
         && !gCubeSnapshot
         && !LLPipeline::sShadowRender
-        && !LLPipeline::sReflectionRender
         && !LLPipeline::sRenderingHUDs;
 }
 
@@ -174,12 +172,12 @@ bool SSGPUCull::shouldDrawInfo(const LLDrawInfo* info)
 
 void SSGPUCull::ensureHiZ(GLuint depth_tex, U32 width, U32 height)
 {
-    LLTexUnit* unit = gGL.getTexUnit(0);
+    ALTextureSlot* unit = gGL.getTextureSlot(0);
 
     if (!mBoxTex)
     {
         glGenTextures(1, &mBoxTex);
-        unit->bindManual(LLTexUnit::TT_TEXTURE, mBoxTex);
+        unit->bindManual(ALTextureSlot::TT_TEXTURE, mBoxTex);
         glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, SS_BOX_TEX_W, SS_BOX_TEX_H);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -192,7 +190,7 @@ void SSGPUCull::ensureHiZ(GLuint depth_tex, U32 width, U32 height)
         // dispatch still draws.
         std::vector<U8> ones(SS_MAX_GROUPS, 0xFF);
         glGenTextures(1, &mVisTex);
-        unit->bindManual(LLTexUnit::TT_TEXTURE, mVisTex);
+        unit->bindManual(ALTextureSlot::TT_TEXTURE, mVisTex);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, SS_MAX_GROUPS, 1, 0, GL_RED, GL_UNSIGNED_BYTE, ones.data());
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -209,7 +207,7 @@ void SSGPUCull::ensureHiZ(GLuint depth_tex, U32 width, U32 height)
     const S32 levels = llmin(max_levels, 12);
 
     glGenTextures(1, &mHiZTex);
-    unit->bindManual(LLTexUnit::TT_TEXTURE, mHiZTex);
+    unit->bindManual(ALTextureSlot::TT_TEXTURE, mHiZTex);
     glTexStorage2D(GL_TEXTURE_2D, levels, GL_R32F, width, height);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -225,8 +223,10 @@ void SSGPUCull::buildHiZ(GLuint depth_tex)
     LLGLSLShader& prog = gSSHiZProgram;
     prog.bind();
 
-    gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, depth_tex);
-    gGL.getTexUnit(1)->bindManual(LLTexUnit::TT_TEXTURE, mHiZTex);
+    // SKOOMA-PORT: target textures carry no sampling state now; without a sampler the depth
+    // attachment is mip-incomplete and even texelFetch reads undefined.
+    gGL.getTextureSlot(0)->bindManual(ALTextureSlot::TT_TEXTURE, depth_tex, gGL.getSampler(ALSamplers::PointClamp));
+    gGL.getTextureSlot(1)->bindManual(ALTextureSlot::TT_TEXTURE, mHiZTex);
     prog.uniform1i(LLStaticHashedString("uDepthTex"), 0);
     prog.uniform1i(LLStaticHashedString("uHiZTex"), 1);
 
@@ -289,7 +289,7 @@ void SSGPUCull::submit(LLViewerCamera& camera, GLuint depth_tex, U32 width, U32 
     const S32 rows = ((count * 2) + SS_BOX_TEX_W - 1) / SS_BOX_TEX_W;
     // Pad to whole rows: glTexSubImage2D reads every row in full.
     mBuild->mBoxes.resize((size_t)rows * SS_BOX_TEX_W * 4, 0.f);
-    gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mBoxTex);
+    gGL.getTextureSlot(0)->bindManual(ALTextureSlot::TT_TEXTURE, mBoxTex);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, SS_BOX_TEX_W, rows, GL_RGBA, GL_FLOAT, mBuild->mBoxes.data());
 
     buildHiZ(depth_tex);
@@ -297,7 +297,7 @@ void SSGPUCull::submit(LLViewerCamera& camera, GLuint depth_tex, U32 width, U32 
     LLGLSLShader& prog = gSSCullProgram;
     prog.bind();
 
-    const glm::mat4 view_proj = toGlm(camera.getProjection()) * toGlm(camera.getModelview());    prog.uniformMatrix4fv(LLStaticHashedString("uViewProj"), 1, GL_FALSE, glm::value_ptr(view_proj));
+    const glm::mat4 view_proj = toGlm(LLMatrix4(camera.getProjection().getF32ptr())) * toGlm(LLMatrix4(camera.getModelview().getF32ptr()));    prog.uniformMatrix4fv(LLStaticHashedString("uViewProj"), 1, GL_FALSE, glm::value_ptr(view_proj));
 
     F32 planes[24];
     for (U32 i = 0; i < 6; ++i)
@@ -316,8 +316,8 @@ void SSGPUCull::submit(LLViewerCamera& camera, GLuint depth_tex, U32 width, U32 
     // Conservative slop against the one-frame depth and the coarse pyramid.
     glUniform1f(uniformLoc(prog, "uBias"), 0.0015f);
 
-    gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mHiZTex);
-    gGL.getTexUnit(1)->bindManual(LLTexUnit::TT_TEXTURE, mBoxTex);
+    gGL.getTextureSlot(0)->bindManual(ALTextureSlot::TT_TEXTURE, mHiZTex);
+    gGL.getTextureSlot(1)->bindManual(ALTextureSlot::TT_TEXTURE, mBoxTex);
     prog.uniform1i(LLStaticHashedString("uHiZ"), 0);
     prog.uniform1i(LLStaticHashedString("uBoxes"), 1);
 

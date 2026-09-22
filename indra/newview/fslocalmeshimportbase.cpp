@@ -152,6 +152,6 @@ void FSLocalMeshImportBase::buildBindPoseMatrix(LLPointer<LLMeshSkinInfo> skinin
     skininfop->mBindPoseMatrix.resize(skininfop->mInvBindMatrix.size());
     for (U32 i = 0; i < skininfop->mInvBindMatrix.size(); ++i)
     {
-        matMul(skininfop->mBindShapeMatrix, skininfop->mInvBindMatrix[i], skininfop->mBindPoseMatrix[i]);
+        skininfop->mBindPoseMatrix[i].setMul(skininfop->mBindShapeMatrix, skininfop->mInvBindMatrix[i]);
     }
 }

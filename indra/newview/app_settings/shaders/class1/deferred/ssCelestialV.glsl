@@ -25,7 +25,8 @@
 
 // <SS:Nexii> Atmo Magic celestial discs: its own shader, not uniforms bolted onto the stock sun/moon ones. Three reasons, in order of how much they matter: 1. A GL uniform nobody sets is ZERO - "how bright"/"how far to drop the quad" on a stock shader means every call site that binds it (now and future, ours and upstream's) must set them or draw a black disc at the wrong height; a separate program cannot be bound by accident. 2. Atmo Magic wants fixed constants, not tunable ones - no legacy 50m drop here (see below), terminator softness and emissive gain are fixed looks - hardcoding says so and keeps them by the code that reads them. 3. Upstream shaders stay untouched: stock renders byte-identically and merges stay clean. What still arrives by uniform is per-BODY state - star position, quad facing, self-lighting - since that genuinely differs per disc.
 
-uniform mat4 modelview_projection_matrix;
+// <SS:Nexii> SKOOMA-PORT: engine UBO (was loose uniforms) - spliced from class1/deferred/matricesBlock.glsl
+//[ENGINE_BLOCK Matrices]
 
 in vec3 position;
 in vec2 texcoord0;

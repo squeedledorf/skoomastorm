@@ -390,7 +390,7 @@ bool LLVOAvatarSelf::buildSkeletonSelf(const LLAvatarSkeletonInfo *info)
     // SL-315
     mScreenp->setWorldPosition(LLVector3::zero);
     // need to update screen agressively when sidebar opens/closes, for example
-    mScreenp->mUpdateXform = true;
+    mScreenp->setUpdateXform(true);
     return true;
 }
 
@@ -1098,6 +1098,29 @@ bool LLVOAvatarSelf::setVisualParamWeight(S32 index, F32 weight, bool upload_bak
     return setParamWeight(param,weight,upload_bake);
 }
 
+// Alchemy: the typed overload LLWearable::writeToAvatar() pushes through.
+// Routed through setParamWeight so cross-wearable params keep our handling.
+bool LLVOAvatarSelf::setVisualParamWeight(S32 index, S32 type, F32 weight)
+{
+    LLViewerVisualParam* param = (LLViewerVisualParam*)LLCharacter::getVisualParam(index);
+    if (!param)
+    {
+        return false;
+    }
+    if (param->getWearableType() == type)
+    {
+        return setParamWeight(param, weight, false); // <FS:Ansariel> [Legacy Bake]
+    }
+    else
+    {
+        // setVisualParamWeight at the moment is only used in writeToAvatar.
+        // The type is supposed to match since wearable is a subset of avatar by type.
+        llassert(false);
+        LL_WARNS() << "Visual param index " << index << " is not of type " << type << LL_ENDL;
+    }
+    return false;
+}
+
 // <FS:Ansariel> [Legacy Bake]
 //bool LLVOAvatarSelf::setParamWeight(const LLViewerVisualParam *param, F32 weight)
 bool LLVOAvatarSelf::setParamWeight(const LLViewerVisualParam *param, F32 weight, bool upload_bake)
@@ -1129,9 +1152,9 @@ bool LLVOAvatarSelf::setParamWeight(const LLViewerVisualParam *param, F32 weight
 }
 
 /*virtual*/
-void LLVOAvatarSelf::updateVisualParams()
+bool LLVOAvatarSelf::updateVisualParams()
 {
-    LLVOAvatar::updateVisualParams();
+    return LLVOAvatar::updateVisualParams();
 }
 
 void LLVOAvatarSelf::writeWearablesToAvatar()
@@ -1145,12 +1168,14 @@ void LLVOAvatarSelf::writeWearablesToAvatar()
             wearable->writeToAvatar(this);
         }
     }
-
 }
 
 /*virtual*/
 void LLVOAvatarSelf::idleUpdateAppearanceAnimation()
 {
+    // SKOOMA-PORT: Alchemy only animates/pushes here while mAppearanceAnimating, relying on
+    // its LLAgentWearables::wearableUpdated() pushing every wearable change to the avatar.
+    // Our llagentwearables does not do that push, so we keep the unconditional path.
     // Animate all top-level wearable visual parameters
     // <FS:Ansariel> [Legacy Bake]
     //gAgentWearables.animateAllWearableParams(calcMorphAmount());
@@ -1161,7 +1186,6 @@ void LLVOAvatarSelf::idleUpdateAppearanceAnimation()
 
     //allow avatar to process updates
     LLVOAvatar::idleUpdateAppearanceAnimation();
-
 }
 
 // virtual

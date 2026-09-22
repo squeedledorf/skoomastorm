@@ -23,9 +23,9 @@
  * $/LicenseInfo$
  */
 
-uniform mat4 modelview_matrix;
-uniform mat3 normal_matrix;
-uniform mat4 modelview_projection_matrix;
+// Shared matrix stack + derived matrices, spliced from
+// class1/deferred/matricesBlock.glsl and bound at UB_MATRICES.
+//[ENGINE_BLOCK Matrices]
 
 in vec3 position;
 
@@ -101,7 +101,15 @@ void main()
 
     oPosition = modelViewProj * oPosition;
 
+    // waterF/underWaterF derive the refraction/reflection UV as refCoord.xy / refCoord.z;
+    // the +0.2 z fudge approximates clip w for the legacy convention. Under reverse-Z carry
+    // true clip w instead (clip.z -> ~0 at far would blow the UV up). refCoord.w is reused
+    // for a wave param below, so only .xyz changes here.
+#ifdef REVERSE_Z
+    refCoord.xyz = vec3(oPosition.xy, oPosition.w);
+#else
     refCoord.xyz = oPosition.xyz + vec3(0,0,0.2);
+#endif
 
     // <SS:Nexii> vary_position carries the DRAWN position: the fragment shader reads its distance for the water fog (calcAtmosphericVarsLinear) and its direction for the fresnel and the reflection probes - all of it must land in the adjusted parallax, or a sky build's ocean gets fogged by its true kilometres and vanishes under the haze. Direction is unchanged by the fold (same ray), so only the fog's distance input actually moves.
     vary_position = (modelview_matrix * vec4(ss_drawn_pos, 1.0)).xyz;

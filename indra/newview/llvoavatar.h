@@ -34,6 +34,7 @@
 #include <vector>
 
 #include <boost/signals2/trackable.hpp>
+#include <boost/unordered_map.hpp>
 
 #include "llavatarappearance.h"
 #include "llavatarpropertiesprocessor.h"  // LLAvatarPropertiesObserver (group tinting)
@@ -91,7 +92,6 @@ class LLVOAvatar :
     public LLAvatarPropertiesObserver,  // group-based nameplate tinting
     public boost::signals2::trackable
 {
-    LL_ALIGN_NEW;
     LOG_CLASS(LLVOAvatar);
 
 public:
@@ -245,7 +245,7 @@ public:
     /*virtual*/ F32             getPixelArea() const;
     /*virtual*/ LLVector3d      getPosGlobalFromAgent(const LLVector3 &position);
     /*virtual*/ LLVector3       getPosAgentFromGlobal(const LLVector3d &position);
-    virtual void                updateVisualParams();
+    virtual bool                updateVisualParams();
 
 /**                    Inherited
  **                                                                            **
@@ -269,7 +269,7 @@ public:
 
 
 private: //aligned members
-    LL_ALIGN_16(LLVector4a  mImpostorExtents[2]);
+    LLVector4a  mImpostorExtents[2];
 
     //--------------------------------------------------------------------
     // Updates
@@ -402,7 +402,9 @@ public:
     static bool     sShowAttachmentPoints;
     static F32      sLODFactor; // user-settable LOD factor
     static F32      sPhysicsLODFactor; // user-settable physics LOD factor
-    static bool     sJointDebug; // output total number of joints being touched for each avatar
+    // SKOOMA-PORT: Alchemy dropped the joint-touch counters this reported. Kept only so
+    // the Advanced menu toggle in llviewermenu.cpp still compiles; it has no effect.
+    static bool     sJointDebug;
 
     static LLPartSysData sCloud;
 
@@ -516,6 +518,8 @@ public:
     LLVector3           mTargetRootToHeadOffset;
 
     S32                 mLastSkeletonSerialNum;
+    // resolved once, since the parameters are added when the avatar loads
+    LLVisualParam*      mMaleParam = nullptr;
 
 
 /**                    Skeleton
@@ -609,6 +613,12 @@ private:
     F32         mLastSkinTime; //value of gFrameTimeSeconds at last skin update
 
     S32         mUpdatePeriod;
+    // An avatar wearing animesh is asked both of these once for itself and
+    // once more per attachment, every frame. Both answers hold for the frame
+    // they were worked out in.
+    S32         mUpdatePeriodFrame;
+    S32         mNeedsUpdateFrame;
+    bool        mNeedsUpdate;
     S32         mNumInitFaces; //number of faces generated when creating the avatar drawable, does not inculde splitted faces due to long vertex buffer.
 
     // profile handle
@@ -743,7 +753,6 @@ public:
 protected:
     void        updateVisibility();
 private:
-    F32         mVisibilityPreference;
     U32         mVisibilityRank;
     bool        mVisible;
 
@@ -763,6 +772,9 @@ private:
 public:
     virtual bool isImpostor();
     bool        shouldImpostor(const F32 rank_factor = 1.0);
+    // the rank half of shouldImpostor, for callers that have already
+    // established this avatar is neither self nor visually muted
+    bool        shouldImpostorByRank(const F32 rank_factor = 1.0) const;
     bool        needsImpostorUpdate() const;
     const LLVector3& getImpostorOffset() const;
     const LLVector2& getImpostorDim() const;
@@ -782,7 +794,19 @@ public:
     const LLVector3*  getLastAnimExtents() const { return mLastAnimExtents; }
     void        setNeedsExtentUpdate(bool val) { mNeedsExtentUpdate = val; }
 
+public:
+    // The rotation of the view basis the impostor was baked in.
+    //
+    // generateImpostor aims its camera AT the avatar, so the G-buffer normals it captures are
+    // encoded in that basis -- not the main camera's. The billboard replays them into the
+    // scene G-buffer, where the lighting pass reads them as main-view-space, so they need
+    // rebasing by (main view) * inverse(bake view) at composite time. Stored per avatar
+    // because an impostor outlives the frame it was baked in and the camera keeps moving.
+    void        setImpostorViewRotation(const LLMatrix3& rot) { mImpostorViewRot = rot; }
+    const LLMatrix3& getImpostorViewRotation() const { return mImpostorViewRot; }
+
 private:
+    LLMatrix3   mImpostorViewRot;
     LLVector3   mImpostorOffset;
     LLVector2   mImpostorDim;
     // This becomes true in the constructor and false after the first
@@ -794,8 +818,6 @@ private:
     F32         mImpostorPixelArea;
     LLVector3   mLastAnimExtents[2];
     LLVector3   mLastAnimBasePos;
-
-    LLCachedControl<bool> mRenderUnloadedAvatar;
 
     //--------------------------------------------------------------------
     // Wind rippling in clothes
@@ -815,10 +837,13 @@ private:
     // Culling
     //--------------------------------------------------------------------
 public:
+    static void setCullNeedsUpdate() { sAvatarCullNeedsUpdate = true; }
     static void cullAvatarsByPixelArea();
     bool        isCulled() const { return mCulled; }
 private:
     bool        mCulled;
+    static bool sAvatarCullNeedsUpdate;
+    static F64  sLastCullUpdateTime; // Time of last cull update
 
     //--------------------------------------------------------------------
     // Constants
@@ -958,7 +983,10 @@ public:
         // List of Matrix4a's for this entry
         LLMeshSkinInfo::matrix_list_t mMatrixPalette;
 
-        // Float array ready to be sent to GL
+        // Float array ready to be sent to GL: one vec4 rebase origin (agent space)
+        // followed by count mat3x4 lines whose translations are relative to it. The
+        // upload splits the two -- AVATAR_MATRIX takes the palette tail, SKIN_ORIGIN
+        // the origin (see apply_matrix_palette).
         std::vector<F32> mGLMp;
 
         MatrixPaletteCache() :
@@ -973,7 +1001,7 @@ public:
     const MatrixPaletteCache& updateSkinInfoMatrixPalette(const LLMeshSkinInfo* skinInfo);
 
     // Map of LLMeshSkinInfo::mHash to MatrixPaletteCache
-    typedef std::unordered_map<U64, MatrixPaletteCache> matrix_palette_cache_t;
+    typedef boost::unordered_map<U64, MatrixPaletteCache> matrix_palette_cache_t;
     matrix_palette_cache_t mMatrixPaletteCache;
 
 protected:
@@ -1052,6 +1080,10 @@ private:
     //--------------------------------------------------------------------
 public:
     bool            isVisible() const;
+    // Whether what this avatar draws is inside the view this frame. The
+    // same as isVisible() for an avatar; an animated object answers for its
+    // volume, since it never draws anything of its own.
+    virtual bool    isInView() const;
     virtual bool    shouldRenderRigged() const;
     void            setVisibilityRank(U32 rank);
     U32             getVisibilityRank() const { return mVisibilityRank; }
@@ -1386,11 +1418,12 @@ public:
     static F32          sGreyUpdateTime; // Last time stats were updated (to prevent multiple updates per frame)
 protected:
     S32                 getUnbakedPixelAreaRank();
-    bool                mHasGrey;
+    bool                mHasGrey = false;
 private:
     F32                 mMinPixelArea;
     F32                 mMaxPixelArea;
-    F32                 mAdjustedPixelArea;
+    F32                 mAdjustedPixelArea = 0.f;
+    F32                 mLastCulledPixelArea = -1.f; // Pixel area when last culled, for tracking significant changes
     std::string         mDebugText;
     std::string         mBakedTextureDebugText;
 

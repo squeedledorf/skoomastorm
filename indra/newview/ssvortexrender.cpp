@@ -407,7 +407,7 @@ void SSVortexRender::render()
     LLGLDisable cull(GL_CULL_FACE);
 
     gSSVortexProgram.bind();
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     static LLStaticHashedString s_squash("ss_squash");
     static LLStaticHashedString s_cam_pos("ss_cam_pos");
@@ -440,7 +440,7 @@ void SSVortexRender::render()
     }
 
     const bool soft = depth_rt
-        && gSSVortexProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, depth_rt, true) >= 0;
+        && gSSVortexProgram.bindDepthTexture(LLShaderMgr::DEFERRED_DEPTH, depth_rt, ALSamplers::BilinearClamp) >= 0;
     gSSVortexProgram.uniform1f(s_soft_m, soft ? VORTEX_SOFT_M : 0.f);
     if (soft)
     {
@@ -635,7 +635,7 @@ void SSVortexRender::render()
     }
 
     gGL.flush();
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
     gSSVortexProgram.unbind();
     gGL.setColorMask(true, true);
 }

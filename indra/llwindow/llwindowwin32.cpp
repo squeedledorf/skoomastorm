@@ -5697,3 +5697,27 @@ void LLWindowWin32::setCustomIcon()
                 });
         }
 }
+
+// SKOOMA-PORT: from Alchemy (llwindowwin32.cpp)
+HMODULE LLWindowWin32::sGLDLLHandle = nullptr;
+
+//static
+PROC WINAPI LLWindowWin32::getProcAddress(const char* func)
+{
+    PROC ret_func = wglGetProcAddress(func);
+    if (!ret_func)
+    {
+        // wglGetProcAddress answers for extensions and nothing else -- every
+        // OpenGL 1.0 and 1.1 entry point comes back null from it, by spec, and
+        // has to be fetched from the library itself.
+        if (!sGLDLLHandle)
+        {
+            sGLDLLHandle = LoadLibrary(L"opengl32.dll");
+        }
+        if (sGLDLLHandle)
+        {
+            ret_func = GetProcAddress(sGLDLLHandle, func);
+        }
+    }
+    return ret_func;
+}

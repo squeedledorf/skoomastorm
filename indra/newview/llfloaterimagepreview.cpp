@@ -483,19 +483,17 @@ void LLFloaterImagePreview::draw()
 
             if(mImagep.notNull())
             {
-                gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mImagep->getTexName());
+                gGL.getTextureSlot(0)->bindManual(ALTextureSlot::TT_TEXTURE, mImagep->getTexName(),
+                                              gGL.getSampler(ALSamplers::BilinearClamp));
             }
             else
             {
                 mImagep = LLViewerTextureManager::getLocalTexture(mRawImagep.get(), false) ;
 
-                gGL.getTexUnit(0)->unbind(mImagep->getTarget()) ;
-                gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mImagep->getTexName());
+                gGL.getTextureSlot(0)->unbind() ;
+                gGL.getTextureSlot(0)->bindManual(ALTextureSlot::TT_TEXTURE, mImagep->getTexName(),
+                                              gGL.getSampler(ALSamplers::BilinearClamp));
                 stop_glerror();
-
-                gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
-
-                gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
                 if (mAvatarPreview)
                 {
                     mAvatarPreview->setTexture(mImagep->getTexName());
@@ -538,7 +536,7 @@ void LLFloaterImagePreview::draw()
             }
             gGL.end();
 
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTextureSlot(0)->unbind();
 
             stop_glerror();
         }
@@ -550,11 +548,11 @@ void LLFloaterImagePreview::draw()
 
                 if (selected == 9)
                 {
-                    gGL.getTexUnit(0)->bind(mSculptedPreview);
+                    gGL.getTextureSlot(0)->bindSampled(mSculptedPreview, ALSamplers::AnisoWrap);
                 }
                 else
                 {
-                    gGL.getTexUnit(0)->bind(mAvatarPreview);
+                    gGL.getTextureSlot(0)->bindSampled(mAvatarPreview, ALSamplers::AnisoWrap);
                 }
 
                 gGL.begin(LLRender::TRIANGLES);
@@ -591,7 +589,7 @@ void LLFloaterImagePreview::draw()
                 }
                 gGL.end();
 
-                gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                gGL.getTextureSlot(0)->unbind();
             }
         }
     }
@@ -880,7 +878,7 @@ void LLFloaterImagePreview::onMouseCaptureLostImagePreview(LLMouseHandler* handl
 //-----------------------------------------------------------------------------
 // LLImagePreviewAvatar
 //-----------------------------------------------------------------------------
-LLImagePreviewAvatar::LLImagePreviewAvatar(S32 width, S32 height) : LLViewerDynamicTexture(width, height, 3, ORDER_MIDDLE, false)
+LLImagePreviewAvatar::LLImagePreviewAvatar(S32 width, S32 height) : LLViewerDynamicTexture(width, height, 3, ORDER_MIDDLE)
 {
     mNeedsUpdate = true;
     mTargetJoint = NULL;
@@ -998,10 +996,10 @@ bool LLImagePreviewAvatar::render()
         LLQuaternion(mCameraYaw, LLVector3::z_axis);
 
     LLQuaternion av_rot = avatarp->mPelvisp->getWorldRotation() * camera_rot;
-    LLViewerCamera::getInstance()->setOriginAndLookAt(
+    LLViewerCamera::getInstance()->lookAt(
         target_pos + ((LLVector3(mCameraDistance, 0.f, 0.f) + mCameraOffset) * av_rot),     // camera
-        LLVector3::z_axis,                                                                  // up
-        target_pos + (mCameraOffset  * av_rot) );                                           // point of interest
+        target_pos + (mCameraOffset  * av_rot), // point of interest
+        LLVector3::z_axis); // up
 
     stop_glerror();
 
@@ -1069,7 +1067,7 @@ void LLImagePreviewAvatar::pan(F32 right, F32 up)
 // LLImagePreviewSculpted
 //-----------------------------------------------------------------------------
 
-LLImagePreviewSculpted::LLImagePreviewSculpted(S32 width, S32 height) : LLViewerDynamicTexture(width, height, 3, ORDER_MIDDLE, false)
+LLImagePreviewSculpted::LLImagePreviewSculpted(S32 width, S32 height) : LLViewerDynamicTexture(width, height, 3, ORDER_MIDDLE)
 {
     mNeedsUpdate = true;
     mCameraDistance = 0.f;
@@ -1201,10 +1199,10 @@ bool LLImagePreviewSculpted::render()
         LLQuaternion(mCameraYaw, LLVector3::z_axis);
 
     LLQuaternion av_rot = camera_rot;
-    LLViewerCamera::getInstance()->setOriginAndLookAt(
+    LLViewerCamera::getInstance()->lookAt(
         target_pos + ((LLVector3(mCameraDistance, 0.f, 0.f) + mCameraOffset) * av_rot),     // camera
-        LLVector3::z_axis,                                                                  // up
-        target_pos + (mCameraOffset  * av_rot) );                                           // point of interest
+        target_pos + (mCameraOffset  * av_rot), // point of interest
+        LLVector3::z_axis); // up
 
     stop_glerror();
 

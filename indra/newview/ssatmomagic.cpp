@@ -819,7 +819,7 @@ void SSAtmoMagic::renderDebug()
 
     LLGLEnable blend(GL_BLEND);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     static const F32 BEACON_HEIGHT = 24.f;
 

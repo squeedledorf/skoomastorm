@@ -1883,11 +1883,6 @@ void SSVolCloud::bakeGroundShadow(const Deck& deck, F32 air_x, F32 air_y)
     }
 
     mShadowRef = LLViewerTextureManager::getLocalTexture(raw.get(), true);
-    if (mShadowRef.notNull() && mShadowRef->getGLTexture())
-    {
-        // Clamped, not wrapped: beyond the grid there is no verdict, and the soften shader's edge fade must meet a stable border texel, never the far side of the map.
-        mShadowRef->getGLTexture()->setAddressMode(LLTexUnit::TAM_CLAMP);
-    }
     mShadowRaw = raw;
     mShadowOriginX = ox;
     mShadowOriginY = oy;
@@ -1922,7 +1917,9 @@ void SSVolCloud::bindGroundShadow(LLGLSLShader& shader)
 
     if (gate > 0.001f)
     {
-        if (shader.bindTexture(LLShaderMgr::ALTERNATE_DIFFUSE_MAP, mShadowRef, LLTexUnit::TT_TEXTURE) < 0)
+        if (shader.bindTexture(LLShaderMgr::ALTERNATE_DIFFUSE_MAP, mShadowRef,
+                               // Clamped, not wrapped: beyond the grid there is no verdict, and the soften shader's edge fade must meet a stable border texel, never the far side of the map.
+                               ALSamplers::AnisoClamp) < 0)
         {
             gate = 0.f;
         }
@@ -2071,8 +2068,8 @@ LLRenderTarget* SSVolCloud::ensureSceneDepthCopy()
 
         S32 diff_map = gCopyDepthProgram.getTextureChannel(LLShaderMgr::DIFFUSE_MAP);
         S32 depth_map = gCopyDepthProgram.getTextureChannel(LLShaderMgr::DEFERRED_DEPTH);
-        gGL.getTexUnit(diff_map)->bind(&gPipeline.mRT->screen);
-        gGL.getTexUnit(depth_map)->bind(&gPipeline.mRT->deferredScreen, true);
+        gGL.getTextureSlot(diff_map)->bind(&gPipeline.mRT->screen);
+        gGL.getTextureSlot(depth_map)->bind(&gPipeline.mRT->deferredScreen, true);
 
         gGL.setColorMask(false, false);
         gPipeline.mScreenTriangleVB->setBuffer();
@@ -2112,7 +2109,7 @@ void SSVolCloud::render()
     gGL.setColorMask(true, false);
 
     gSSVolCloudProgram.bind();
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     static LLStaticHashedString s_drift("ss_drift");
     // <SS:Nexii> D3: ss_time is retired - see the boil-clock block in update() and ssdeckboilcore.h. These two
@@ -2256,7 +2253,7 @@ void SSVolCloud::render()
     static const F32 SOFT_M = 112.5f;
 
     bool soft = have_depth_copy &&
-        gSSVolCloudProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &mDepthCopy, true) >= 0;
+        gSSVolCloudProgram.bindDepthTexture(LLShaderMgr::DEFERRED_DEPTH, &mDepthCopy, ALSamplers::BilinearClamp) >= 0;
 
     gSSVolCloudProgram.uniform1f(s_soft, soft ? SOFT_M : 0.f);
     if (soft)
@@ -2289,21 +2286,21 @@ void SSVolCloud::render()
 
         if (!fetchDeckTextures(deck)) continue;
 
-        gSSVolCloudProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, deck.mTextureRef, LLTexUnit::TT_TEXTURE);
+        gSSVolCloudProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, deck.mTextureRef, ALSamplers::AnisoWrap);
         gSSVolCloudProgram.bindTexture(LLShaderMgr::CLOUD_NOISE_MAP,
                                        deck.mDetailRef.notNull() ? deck.mDetailRef.get() : deck.mTextureRef.get(),
-                                       LLTexUnit::TT_TEXTURE);
+                                       ALSamplers::AnisoWrap);
 
         // <SS:Nexii> The crossfade partners on the spare reserved channels (bumpMap, specularMap - same reserved-name rule as altDiffuseMap above), pinned on the current maps when no fade runs so the shader's partner samples never read an unbound unit. The weights mix the pairs per sample in the fragment stage.
         LLViewerFetchedTexture* tex_next = deck.mTextureNextRef.notNull()
             ? deck.mTextureNextRef.get()
             : deck.mTextureRef.get();
-        gSSVolCloudProgram.bindTexture(LLShaderMgr::BUMP_MAP, tex_next, LLTexUnit::TT_TEXTURE);
+        gSSVolCloudProgram.bindTexture(LLShaderMgr::BUMP_MAP, tex_next, ALSamplers::AnisoWrap);
         gSSVolCloudProgram.uniform1f(s_base_blend, deck.mTextureBlend);
 
         LLViewerFetchedTexture* det_cur = deck.mDetailRef.notNull() ? deck.mDetailRef.get() : deck.mTextureRef.get();
         LLViewerFetchedTexture* det_next = deck.mDetailNextRef.notNull() ? deck.mDetailNextRef.get() : det_cur;
-        gSSVolCloudProgram.bindTexture(LLShaderMgr::SPECULAR_MAP, det_next, LLTexUnit::TT_TEXTURE);
+        gSSVolCloudProgram.bindTexture(LLShaderMgr::SPECULAR_MAP, det_next, ALSamplers::AnisoWrap);
         gSSVolCloudProgram.uniform1f(s_detail_blend, deck.mDetailBlend);
 
         // <SS:Nexii> The convection noise map, bound for the fragment stage's anvil carving - the same map the field was shaped with, authored or procedural, so the shader cuts the puffs by the very geography the towers were grown from. A reserved channel (altDiffuseMap): only reserved names can be bound as textures, see the depthMap note in ssVolCloudF.glsl. Tile metres of zero tells the shader there is nothing to read.
@@ -2312,7 +2309,7 @@ void SSVolCloud::render()
             : (LLTexture*)deck.mNoiseProcRef.get();
         if (noise_map)
         {
-            gSSVolCloudProgram.bindTexture(LLShaderMgr::ALTERNATE_DIFFUSE_MAP, noise_map);
+            gSSVolCloudProgram.bindTexture(LLShaderMgr::ALTERNATE_DIFFUSE_MAP, noise_map, ALSamplers::AnisoWrap);
         }
         gSSVolCloudProgram.uniform1f(s_noise_tile, noise_map ? deck.mNoiseTileM : 0.f);
         gSSVolCloudProgram.uniform1f(s_noise_hole, deck.mNoiseHole);
@@ -2402,7 +2399,7 @@ void SSVolCloud::render()
         LLTexture* profile_map = deck.mProfileRef.notNull() ? (LLTexture*)deck.mProfileRef.get() : nullptr;
         if (profile_map)
         {
-            gSSVolCloudProgram.bindTexture(LLShaderMgr::BUMP_MAP2, profile_map);
+            gSSVolCloudProgram.bindTexture(LLShaderMgr::BUMP_MAP2, profile_map, ALSamplers::AnisoClamp);
         }
         gSSVolCloudProgram.uniform1f(s_profile, profile_map ? 1.f : 0.f);
 
@@ -2679,7 +2676,7 @@ void SSVolCloud::render()
 
     gGL.flush();
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
     gSSVolCloudProgram.unbind();
 
     gGL.setColorMask(true, true);
@@ -2735,12 +2732,8 @@ bool SSVolCloud::fetchDeckTextures(Deck& deck)
         {
             if (deck.mNoiseProcRef.isNull())
             {
+                // The map tiles, so it is sampled AnisoWrap at the bind.
                 deck.mNoiseProcRef = LLViewerTextureManager::getLocalTexture(deck.mNoiseProcRaw.get(), true);
-                if (deck.mNoiseProcRef.notNull() && deck.mNoiseProcRef->getGLTexture())
-                {
-                    // The map tiles, so the GL copy has to as well.
-                    deck.mNoiseProcRef->getGLTexture()->setAddressMode(LLTexUnit::TAM_WRAP);
-                }
             }
         }
         else if (deck.mNoiseW > 0)
@@ -2762,13 +2755,9 @@ bool SSVolCloud::fetchDeckTextures(Deck& deck)
                 deck.mProfile, FTT_DEFAULT, true, LLGLTexture::BOOST_HIGH);
             if (deck.mProfileRef.notNull())
             {
+                // The ramp runs base to lid and clamps at both rails (AnisoClamp at the bind); a
+                // wrapped strip would blend its ends together at v 0 and v 1.
                 deck.mProfileRef->setNoDelete();
-                if (deck.mProfileRef->getGLTexture())
-                {
-                    // The ramp runs base to lid and clamps at both rails; a wrapped strip
-                    // would blend its ends together at v 0 and v 1.
-                    deck.mProfileRef->getGLTexture()->setAddressMode(LLTexUnit::TAM_CLAMP);
-                }
             }
             deck.mProfileN = 0;
             deck.mProfileCurve.clear();
@@ -3294,7 +3283,7 @@ void SSVolCloud::renderDebug()
     LLGLEnable blend(GL_BLEND);
     LLGLDepthTest depth(GL_TRUE, GL_FALSE);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     auto drawn = [&](const LLVector3& p) -> LLVector3
     {

@@ -31,8 +31,10 @@
 
 #include <functional>
 #include <string>
-#include <unordered_map>
+#include <boost/unordered_map.hpp>
 #include <list>
+
+#include "llglheaders.h"
 
 #include "llerror.h"
 #include "v4color.h"
@@ -43,8 +45,7 @@
 #include "llgltypes.h"
 #include "llinstancetracker.h"
 
-#include "llglheaders.h"
-#include "glm/mat4x4.hpp"
+#include "llmatrix4a.h"
 
 extern bool gDebugGL;
 extern bool gDebugSession;
@@ -61,6 +62,15 @@ void ll_close_fail_log();
 
 class LLSD;
 
+// Hard minimum OpenGL version. The renderer assumes this unconditionally rather than
+// degrading below it: deprecated formats are re-expressed through GL_TEXTURE_SWIZZLE_RGBA
+// instead of being repacked on the CPU, the texture upload thread is always enabled, and
+// the shader backend expects GLSL 4.10.
+//
+// Biased down by 0.01 like the other version checks in this file, because mGLVersion is
+// assembled as major + minor * 0.1f and 4.1f is not exactly representable.
+const F32 GL_MINIMUM_VERSION = 4.09f;
+
 // Manage GL extensions...
 class LLGLManager
 {
@@ -70,11 +80,18 @@ public:
     bool initGL();
     void shutdownGL();
 
-#if LL_WINDOWS
-    void initWGL(); // Initializes stupid WGL extensions
-#endif
+    void initWGL(); // Initializes WGL extensions
+    void initEGL(); // Initializes EGL extensions (Linux, Wayland and X11 alike)
 
     std::string getRawGLString(); // For sending to simulator
+
+    // Apple's Metal-backed driver aborts on tessellated draws while a
+    // GL_PRIMITIVES_GENERATED query is active without transform feedback.
+    // Timer and sample queries, and primitive queries for other draws, work.
+    bool canQueryPrimitives(bool tessellated) const
+    {
+        return !tessellated || !mIsApple;
+    }
 
     bool mInited;
     bool mIsDisabled;
@@ -92,33 +109,61 @@ public:
     F32 mMaxAnisotropy = 0.f;
     S32 mMaxUniformBlockSize = 0;
     S32 mMaxVaryingVectors = 0;
+    LLVector2 mAliasedLineRange = LLVector2(1.f, 1.f);
 
     // GL 4.x capabilities
     bool mHasCubeMapArray = false;
     bool mHasDebugOutput = false;
     bool mHasTransformFeedback = false;
     bool mHasAnisotropic = false;
+    // Immutable texture storage (glTexStorage*). Core in 4.2, but also reachable on a
+    // 4.1 context via GL_ARB_texture_storage -- which is how macOS gets it. Only true
+    // once the entry point has actually resolved, so callers may trust it directly.
+    bool mHasTextureStorage = false;
     // <SS:Nexii> GL_ARB_texture_compression_bptc, core in GL 4.2 - gates every BC7 texture upload, see doc/super_compressed_textures.md
     bool mHasBPTC = false;
     // </SS:Nexii>
+    // GL_EXT_texture_sRGB_decode: sampler/texture control over whether an sRGB-format
+    // texture has its transfer function applied on read. Never promoted to core, but
+    // universally supported on the hardware this viewer runs on, and REQUIRED here --
+    // the renderer decodes explicitly rather than implicitly, so it needs to be able to
+    // turn the implicit decode off. See ALSampler::SRGBDecode.
+    bool mHasTextureSRGBDecode = false;
+    // Direct state access (glBindTextureUnit, glCreateSamplers, glTextureStorage*, ...).
+    // Core in 4.5, also reachable as GL_ARB_direct_state_access. Only true once the entry
+    // points have actually resolved, so callers may trust it directly.
+    //
+    // NOTE: DSA entry points that take a texture name require the texture's target to
+    // already be established -- glBindTextureUnit on a name straight out of glGenTextures
+    // is INVALID_OPERATION. Allocation paths that bind-to-create must keep using
+    // glBindTexture until they are ported to glCreateTextures.
+    bool mHasDirectStateAccess = false;
+    // Clip control (glClipControl for GL_ZERO_TO_ONE depth range). Core in 4.5, also
+    // reachable as GL_ARB_clip_control. Gates the reverse-Z depth path; only true once
+    // the entry point has actually resolved, so callers may trust it directly. Absent on
+    // macOS GL 4.1, which stays forward-Z.
+    bool mHasClipControl = false;
 
     // Vendor-specific extensions
     bool mHasAMDAssociations = false;
     bool mHasNVXGpuMemoryInfo = false;
     bool mHasATIMemInfo = false;
+    bool mHasEXTMemoryObject           = false;
+    bool mHasEXTSemaphore              = false;
+    bool mHasEXTMemoryObjectWin32      = false;
+    bool mHasEXTSemaphoreWin32         = false;
 
     bool mIsAMD;
+    bool mIsMobileGF = false; // <FS> kept for llviewershadermgr; Alchemy no longer detects it
     bool mIsNVIDIA;
     bool mIsIntel;
     bool mIsApple = false;
+    // True for any Mesa driver (radeonsi, iris, llvmpipe, zink, ...). Detected
+    // from the GL_VERSION string; used to gate Mesa-specific workarounds.
+    bool mIsMesa = false;
 
     // hints to the render pipe
     U32 mDownScaleMethod = 0; // see settings.xml RenderDownScaleMethod
-
-#if LL_DARWIN
-    // Needed to distinguish problem cards on older Macs that break with Materials
-    bool mIsMobileGF;
-#endif
 
     // Whether this version of GL is good enough for SL to use
     bool mHasRequirements;
@@ -133,7 +178,8 @@ public:
     std::string mGLVersionString;
 
     U32 mVRAM; // VRAM in MB
-    S32 mVRAMDetected; // <FS:Beq/> The amount detected/reported by the OS/Drivers. If different to mVRAM there is an override in place.
+    U32 mVRAMDetected = 0; // <FS:Beq/> add override support
+
     std::string getGLInfoString();
     void printGLInfoString();
     void getGLInfo(LLSD& info);
@@ -147,7 +193,11 @@ public:
     // In ALL CAPS
     std::string mGLRenderer;
 
+    // GL Extension String
+    std::set<std::string> mGLExtensions;
+
 private:
+    void reloadExtensionsString();
     void initExtensions();
     void initGLStates();
 };
@@ -162,6 +212,22 @@ void rotate_quat(LLQuaternion& rotation);
 void flush_glerror(); // Flush GL errors when we know we're handling them correctly.
 
 void log_glerror();
+// Validate every sampler the currently bound program declares against the state actually
+// bound to its texture unit: something bound at all, and no depth/compare mismatch in either
+// direction (non-shadow sampler over a compare-enabled depth texture, or a shadow sampler
+// without comparisons). Returns true when the state is sound.
+//
+// gDebugGL only -- returns true immediately otherwise. Intended for llassert() at draw
+// sites, the way LLVertexBuffer::validateRange is used, so it fails at the draw responsible
+// and names the uniform instead of leaving a driver warning to be traced back by hand.
+bool validate_bound_samplers();
+
+// Drop the cached sampler enumeration for a program about to be deleted. GL is free to hand
+// the name back out, and the cache revalidates only on active-uniform COUNT -- a recreated
+// program with the same name and count would be validated against the old program's
+// samplers. Call before glDeleteProgram; harmless when the program was never cached.
+void forget_program_samplers(U32 program);
+
 void assert_glerror();
 
 void clear_glerror();
@@ -252,7 +318,7 @@ public:
     static void checkStates(GLboolean writeAlpha = GL_TRUE);
 
 protected:
-    static std::unordered_map<LLGLenum, LLGLboolean> sStateMap;
+    static boost::unordered_map<LLGLenum, LLGLboolean> sStateMap;
 
 public:
     enum { CURRENT_STATE = -2, DISABLED_STATE = 0, ENABLED_STATE = 1 };
@@ -265,19 +331,6 @@ protected:
     LLGLenum mState;
     bool mWasEnabled;
     bool mIsEnabled;
-};
-
-// New LLGLState class wrappers that don't depend on actual GL flags.
-class LLGLEnableBlending : public LLGLState
-{
-public:
-    LLGLEnableBlending(bool enable);
-};
-
-class LLGLEnableAlphaReject : public LLGLState
-{
-public:
-    LLGLEnableAlphaReject(bool enable);
 };
 
 // Enable with functor
@@ -318,13 +371,12 @@ public:
   GL_MODELVIEW_MATRIX is active whenever program execution
   leaves this class.
   Does not stack.
-  Caches inverse of projection matrix used in gGLObliqueProjectionInverse
 */
 class LLGLUserClipPlane
 {
 public:
 
-    LLGLUserClipPlane(const LLPlane& plane, const glm::mat4& modelview, const glm::mat4& projection, bool apply = true);
+    LLGLUserClipPlane(const LLPlane& plane, const LLMatrix4a& modelview, const LLMatrix4a& projection, bool apply = true);
     ~LLGLUserClipPlane();
 
     void setPlane(F32 a, F32 b, F32 c, F32 d);
@@ -333,12 +385,13 @@ public:
 private:
     bool mApply;
 
-    glm::mat4 mProjection;
-    glm::mat4 mModelview;
+    LLMatrix4a mProjection;
+    LLMatrix4a mModelview;
 };
 
 /*
   Modify and load projection matrix to push depth values to far clip plane.
+  The default constructor squashes the projection on the stack.
 
   Restores projection matrix on destruction.
   Saves/restores matrix mode around projection manipulation.
@@ -348,9 +401,9 @@ class LLGLSquashToFarClip
 {
 public:
     LLGLSquashToFarClip();
-    LLGLSquashToFarClip(const glm::mat4& projection, U32 layer = 0);
+    LLGLSquashToFarClip(const LLMatrix4a& projection, U32 layer = 0);
 
-    void setProjectionMatrix(glm::mat4 projection, U32 layer);
+    void setProjectionMatrix(LLMatrix4a projection, U32 layer);
 
     ~LLGLSquashToFarClip();
 };
@@ -384,7 +437,7 @@ public:
     virtual void updateGL() = 0;
 };
 
-const U32 FENCE_WAIT_TIME_NANOSECONDS = 1000;  //1 ms
+const U32 FENCE_WAIT_TIME_NANOSECONDS = 1000;  //1 microsecond (despite the name's history)
 
 class LLGLFence
 {
@@ -411,7 +464,6 @@ public:
     void wait();
 };
 
-extern LLMatrix4 gGLObliqueProjectionInverse;
 
 #include "llglstates.h"
 
@@ -423,68 +475,5 @@ extern bool gClothRipple;
 extern bool gHeadlessClient;
 extern bool gNonInteractive;
 extern bool gGLActive;
-
-// Deal with changing glext.h definitions for newer SDK versions, specifically
-// with MAC OSX 10.5 -> 10.6
-
-
-#ifndef GL_DEPTH_ATTACHMENT
-#define GL_DEPTH_ATTACHMENT GL_DEPTH_ATTACHMENT_EXT
-#endif
-
-#ifndef GL_STENCIL_ATTACHMENT
-#define GL_STENCIL_ATTACHMENT GL_STENCIL_ATTACHMENT_EXT
-#endif
-
-#ifndef GL_FRAMEBUFFER
-#define GL_FRAMEBUFFER GL_FRAMEBUFFER_EXT
-#define GL_DRAW_FRAMEBUFFER GL_DRAW_FRAMEBUFFER_EXT
-#define GL_READ_FRAMEBUFFER GL_READ_FRAMEBUFFER_EXT
-#define GL_FRAMEBUFFER_COMPLETE GL_FRAMEBUFFER_COMPLETE_EXT
-#define GL_FRAMEBUFFER_UNSUPPORTED GL_FRAMEBUFFER_UNSUPPORTED_EXT
-#define GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT_EXT
-#define GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT_EXT
-#define glGenFramebuffers glGenFramebuffersEXT
-#define glBindFramebuffer glBindFramebufferEXT
-#define glCheckFramebufferStatus glCheckFramebufferStatusEXT
-#define glBlitFramebuffer glBlitFramebufferEXT
-#define glDeleteFramebuffers glDeleteFramebuffersEXT
-#define glFramebufferRenderbuffer glFramebufferRenderbufferEXT
-#define glFramebufferTexture2D glFramebufferTexture2DEXT
-#endif
-
-#ifndef GL_RENDERBUFFER
-#define GL_RENDERBUFFER GL_RENDERBUFFER_EXT
-#define glGenRenderbuffers glGenRenderbuffersEXT
-#define glBindRenderbuffer glBindRenderbufferEXT
-#define glRenderbufferStorage glRenderbufferStorageEXT
-#define glRenderbufferStorageMultisample glRenderbufferStorageMultisampleEXT
-#define glDeleteRenderbuffers glDeleteRenderbuffersEXT
-#endif
-
-#ifndef GL_COLOR_ATTACHMENT
-#define GL_COLOR_ATTACHMENT GL_COLOR_ATTACHMENT_EXT
-#endif
-
-#ifndef GL_COLOR_ATTACHMENT0
-#define GL_COLOR_ATTACHMENT0 GL_COLOR_ATTACHMENT0_EXT
-#endif
-
-#ifndef GL_COLOR_ATTACHMENT1
-#define GL_COLOR_ATTACHMENT1 GL_COLOR_ATTACHMENT1_EXT
-#endif
-
-#ifndef GL_COLOR_ATTACHMENT2
-#define GL_COLOR_ATTACHMENT2 GL_COLOR_ATTACHMENT2_EXT
-#endif
-
-#ifndef GL_COLOR_ATTACHMENT3
-#define GL_COLOR_ATTACHMENT3 GL_COLOR_ATTACHMENT3_EXT
-#endif
-
-
-#ifndef GL_DEPTH24_STENCIL8
-#define GL_DEPTH24_STENCIL8 GL_DEPTH24_STENCIL8_EXT
-#endif
 
 #endif // LL_LLGL_H

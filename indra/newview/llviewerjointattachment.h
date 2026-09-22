@@ -43,7 +43,7 @@ constexpr F32 MAX_ATTACHMENT_DIST = 3.5f; // meters?
 //-----------------------------------------------------------------------------
 // class LLViewerJointAttachment
 //-----------------------------------------------------------------------------
-class LLViewerJointAttachment :
+class alignas(16) LLViewerJointAttachment :
     public LLViewerJoint
 {
 public:

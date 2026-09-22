@@ -27,7 +27,8 @@
 // collar-span vertex - already subdivided by SSVortex::squashSegments so a tall span still bends smoothly through
 // the knee - and this pulls each one radially toward the camera, keeping its exact ray, so only depth compresses.
 
-uniform mat4 modelview_projection_matrix;
+// <SS:Nexii> SKOOMA-PORT: engine UBO (was loose uniforms) - spliced from class1/deferred/matricesBlock.glsl
+//[ENGINE_BLOCK Matrices]
 
 uniform vec3 ss_squash;   // x knee, y cap, z virtual field radius - SSVolCloud's own, shared so a funnel inside a
                            // far cloud stays inside it in drawn depth too.

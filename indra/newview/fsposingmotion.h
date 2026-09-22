@@ -34,7 +34,7 @@
 #include "fsjointpose.h"
 #include "llkeyframemotion.h"
 
-#define MIN_REQUIRED_PIXEL_AREA_POSING 500.f
+constexpr F32 MIN_REQUIRED_PIXEL_AREA_POSING = 500.f;
 
 //-----------------------------------------------------------------------------
 // class FSPosingMotion
@@ -218,7 +218,6 @@ private:
     /// <summary>
     /// Constructor and usage requires this not be NULL.
     /// </summary>
-    JointMotionList dummyMotionList;
 
     /// <summary>
     /// The time constant, in seconds, we use for transitioning between one animation-state to another; this affects the 'damping'
@@ -235,7 +234,7 @@ private:
     const F32 mInterpolationTime = 0.25f;
 
     /// <summary>
-    /// The collection of joint poses this motion uses to pose the joints of the character this is animating. 
+    /// The collection of joint poses this motion uses to pose the joints of the character this is animating.
     /// </summary>
     std::vector<FSJointPose> mJointPoses;
 

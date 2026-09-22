@@ -176,8 +176,12 @@ void LLManipTranslate::restoreGL()
 
     GLuint* d = new GLuint[rez*rez];
 
-    gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, sGridTex->getTexName(), true);
-    gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_TRILINEAR);
+    gGL.getTextureSlot(0)->bindManual(ALTextureSlot::TT_TEXTURE, sGridTex->getTexName(),
+                                  gGL.getSampler(ALSamplers::TrilinearWrap));
+
+    // SKOOMA-PORT: immutable storage, so allocate the whole mip chain before the level uploads below.
+    LLImageGL::allocateTexture2D(GL_TEXTURE_2D, GL_RGBA8, rez, rez, GL_RGBA, GL_UNSIGNED_BYTE,
+                                 nullptr, LLImageGL::calcMipLevelCount(rez, rez));
 
     while (rez >= 1)
     {
@@ -272,7 +276,7 @@ void LLManipTranslate::restoreGL()
                 }
             }
         }
-        LLImageGL::setManualImage(GL_TEXTURE_2D, mip, GL_RGBA, rez, rez, GL_RGBA, GL_UNSIGNED_BYTE, d);
+        LLImageGL::setManualSubImage(GL_TEXTURE_2D, mip, rez, rez, GL_RGBA, GL_UNSIGNED_BYTE, d);
         rez = rez >> 1;
         mip++;
     }
@@ -683,14 +687,6 @@ bool LLManipTranslate::handleHover(S32 x, S32 y, MASK mask)
         LLSelectNode* selectNode = *iter;
         LLViewerObject* object = selectNode->getObject();
 
-        if (selectNode->mSelectedGLTFNode != -1)
-        {
-            // manipulating a GLTF node
-            clamped_relative_move_f -= selectNode->mLastMoveLocal;
-            object->moveGLTFNode(selectNode->mSelectedGLTFNode, clamped_relative_move_f);
-            selectNode->mLastMoveLocal += clamped_relative_move_f;
-        }
-        else
         {
             // Only apply motion to root objects and objects selected
             // as "individual".
@@ -827,8 +823,8 @@ void LLManipTranslate::highlightManipulators(S32 x, S32 y)
     }
 
     //LLBBox bbox = LLSelectMgr::getInstance()->getBBoxOfSelection();
-    LLMatrix4 projMatrix = LLViewerCamera::getInstance()->getProjection();
-    LLMatrix4 modelView = LLViewerCamera::getInstance()->getModelview();
+    LLMatrix4 projMatrix = LLViewerCamera::getInstance()->getForwardZProjection().toMatrix4();
+    LLMatrix4 modelView = LLViewerCamera::getInstance()->frameModelview().toMatrix4();
 
     LLVector3 object_position = getPivotPoint();
 
@@ -1123,7 +1119,7 @@ void LLManipTranslate::renderSnapGuides()
     F32 max_subdivisions = sGridMaxSubdivisionLevel;//(F32)gSavedSettings.getS32("GridSubdivision");
     F32 line_alpha = gSavedSettings.getF32("GridOpacity");
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
     LLGLDepthTest gls_depth(GL_TRUE);
     LLGLDisable gls_cull(GL_CULL_FACE);
     LLVector3 translate_axis;
@@ -1533,7 +1529,7 @@ void LLManipTranslate::renderSnapGuides()
             break;
         }
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
         highlightIntersection(normal, selection_center, grid_rotation, inner_color);
 
         gGL.pushMatrix();
@@ -1546,7 +1542,7 @@ void LLManipTranslate::renderSnapGuides()
         F32 sz = mGridSizeMeters;
         F32 tiles = sz;
 
-        gGL.matrixMode(LLRender::MM_TEXTURE);
+        gGL.matrixMode(LLRender::MM_TEXTURE0);
         gGL.pushMatrix();
         usc = 1.0f/usc;
         vsc = 1.0f/vsc;
@@ -1573,7 +1569,8 @@ void LLManipTranslate::renderSnapGuides()
                 //LLGLDisable stencil(GL_STENCIL_TEST);
                 {
                     LLGLDepthTest gls_depth(GL_TRUE, GL_FALSE, GL_GREATER);
-                    gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, getGridTexName());
+                    gGL.getTextureSlot(0)->bindManual(ALTextureSlot::TT_TEXTURE, getGridTexName(),
+                                                  gGL.getSampler(ALSamplers::TrilinearWrap));
                     gGL.flush();
                     gGL.blendFunc(LLRender::BF_ZERO, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
                     renderGrid(u,v,tiles,0.9f, 0.9f, 0.9f,a*0.15f);
@@ -1583,11 +1580,12 @@ void LLManipTranslate::renderSnapGuides()
 
                 {
                     //draw black overlay
-                    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                    gGL.getTextureSlot(0)->unbind();
                     renderGrid(u,v,tiles,0.0f, 0.0f, 0.0f,a*0.16f);
 
                     //draw grid top
-                    gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, getGridTexName());
+                    gGL.getTextureSlot(0)->bindManual(ALTextureSlot::TT_TEXTURE, getGridTexName(),
+                                                  gGL.getSampler(ALSamplers::TrilinearWrap));
                     renderGrid(u,v,tiles,1,1,1,a);
 
                     gGL.popMatrix();
@@ -1699,7 +1697,7 @@ void LLManipTranslate::highlightIntersection(LLVector3 normal,
         LLGLDepthTest depth (GL_TRUE, GL_FALSE, GL_ALWAYS);
         //glStencilFunc(GL_ALWAYS, 0, stencil_mask);
         gGL.setColorMask(false, false);
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
 
         gGL.diffuseColor4f(1,1,1,1);
 
@@ -1774,7 +1772,7 @@ void LLManipTranslate::highlightIntersection(LLVector3 normal,
 
     //draw volume/plane intersections
     {
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
         LLGLDepthTest depth(GL_FALSE);
         //LLGLEnable stencil(GL_STENCIL_TEST);
         glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
@@ -1930,7 +1928,7 @@ void LLManipTranslate::renderTranslationHandles()
         relative_camera_dir.normVec();
 
         {
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTextureSlot(0)->unbind();
             LLGLDisable cull_face(GL_CULL_FACE);
 
             LLColor4 color1;
@@ -2172,7 +2170,7 @@ void LLManipTranslate::renderTranslationHandles()
             }
         }
         {
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTextureSlot(0)->unbind();
 
             // Since we draw handles with depth testing off, we need to draw them in the
             // proper depth order.
@@ -2246,7 +2244,7 @@ void LLManipTranslate::renderTranslationHandles()
 
 void LLManipTranslate::renderArrow(S32 which_arrow, S32 selected_arrow, F32 box_size, F32 arrow_size, F32 handle_size, bool reverse_direction)
 {
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
     LLGLEnable gls_blend(GL_BLEND);
 
     for (S32 pass = 1; pass <= 2; pass++)

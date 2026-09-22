@@ -48,6 +48,9 @@ namespace LL
 {
     namespace GLTF
     {
+        // SKOOMA-PORT: LLGLSLShader::NUM_GLTF_VARIANTS went with the PMFP renderer; the asset keeps its own count
+        constexpr static U8 NUM_GLTF_VARIANTS = 16;
+
         class Asset;
 
         class Extension
@@ -345,7 +348,7 @@ namespace LL
             // list of render batches
             // indexed by [material index + 1](0 is reserved for default material)
             // there should be exactly one render batch per material per variant
-            std::vector<RenderBatch> mBatches[LLGLSLShader::NUM_GLTF_VARIANTS];
+            std::vector<RenderBatch> mBatches[LL::GLTF::NUM_GLTF_VARIANTS];
         };
 
 

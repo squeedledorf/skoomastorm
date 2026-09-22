@@ -29,6 +29,7 @@
 
 #include <string>
 #include "llrect.h"
+#include "llcheckboxctrl.h"
 #include "lluictrl.h"
 #include "lluicolor.h"
 #include "llstyle.h"
@@ -80,6 +81,9 @@ public:
                                 dropdown_bg_color;
 
         Optional<bool>          header_visible;
+
+        // Optional checkbox at the right end of the header (Alchemy Lightbox).
+        Optional<LLCheckBoxCtrl::Params> header_check_box;
 
         Optional<bool>          fit_panel;
 
@@ -168,6 +172,9 @@ public:
     virtual bool handleKey(KEY key, MASK mask, bool called_from_parent);
 
     virtual bool handleToolTip(S32 x, S32 y, MASK mask);
+
+    // The header checkbox, or null for a tab without header_check_box.
+    LLCheckBoxCtrl* getHeaderCheckBox() const { return mHeaderCheckBox; }
     virtual bool handleScrollWheel( S32 x, S32 y, S32 clicks );
 
 
@@ -244,6 +251,10 @@ private:
 
     LLScrollbar*    mScrollbar;
     LLView*         mContainerPanel;
+
+    // Owned by the header; held here because the tab gets the mouse first.
+    LLCheckBoxCtrl* mHeaderCheckBox;
+    bool pointInHeaderCheckBox(S32 x, S32 y) const;
 
     LLUIColor mDropdownBGColor;
 };

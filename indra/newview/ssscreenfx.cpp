@@ -44,6 +44,7 @@
 #include "llviewershadermgr.h"
 #include "llviewertexture.h"
 #include "pipeline.h"
+#include "ssglmcompat.h"
 
 #include "threadpool.h"
 #include "workqueue.h"
@@ -537,7 +538,7 @@ bool SSScreenFXPost::drawDropMap(S32 w, S32 h, F32 aspect)
                       LLRender::BF_ONE, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
 
         gUIProgram.bind();
-        gGL.getTexUnit(0)->bind(mCapTex);
+        gGL.getTextureSlot(0)->bindSampled(mCapTex, ALSamplers::AnisoWrap);
 
         // Stable screen space straight to clip space: x is measured in screen HEIGHTS, so the aspect divides out here and nowhere else.
         const F32 sx = 2.f / llmax(aspect, 0.01f);
@@ -574,7 +575,7 @@ bool SSScreenFXPost::drawDropMap(S32 w, S32 h, F32 aspect)
         gGL.popMatrix();
         gGL.matrixMode(LLRender::MM_MODELVIEW);
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
         gUIProgram.unbind();
         gGL.setSceneBlendType(LLRender::BT_ALPHA);
     }
@@ -634,7 +635,7 @@ void SSScreenFXPost::drawClearMap(S32 w, S32 h, F32 aspect)
     {
         gGL.blendFunc(LLRender::BF_ZERO, LLRender::BF_ONE_MINUS_SOURCE_ALPHA,
                       LLRender::BF_ZERO, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
         gGL.color4f(0.f, 0.f, 0.f, decay);
         gGL.begin(LLRender::TRIANGLES);
         gGL.vertex2f(-1.f, -1.f); gGL.vertex2f(3.f, -1.f); gGL.vertex2f(-1.f, 3.f);
@@ -646,7 +647,7 @@ void SSScreenFXPost::drawClearMap(S32 w, S32 h, F32 aspect)
     // and a fast runner does not draw a fainter line than a slow one.
     gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE,
                   LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE);
-    gGL.getTexUnit(0)->bind(mCapTex);
+    gGL.getTextureSlot(0)->bindSampled(mCapTex, ALSamplers::AnisoWrap);
     gGL.color4f(1.f, 1.f, 1.f, 1.f);
 
     const F32 sx = 2.f / llmax(aspect, 0.01f);
@@ -677,7 +678,7 @@ void SSScreenFXPost::drawClearMap(S32 w, S32 h, F32 aspect)
     gGL.popMatrix();
     gGL.matrixMode(LLRender::MM_MODELVIEW);
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
     gUIProgram.unbind();
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
 
@@ -703,8 +704,8 @@ bool SSScreenFXPost::renderHeat(LLRenderTarget* src, LLRenderTarget* dst)
     dst->bindTarget();
 
     gSSPostHeatProgram.bind();
-    gSSPostHeatProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src, false, LLTexUnit::TFO_BILINEAR);
-    gSSPostHeatProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &gPipeline.mRT->deferredScreen, true);
+    gSSPostHeatProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src);
+    gSSPostHeatProgram.bindDepthTexture(LLShaderMgr::DEFERRED_DEPTH, &gPipeline.mRT->deferredScreen, ALSamplers::BilinearClamp);
 
     gSSPostHeatProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)dst->getWidth(), (GLfloat)dst->getHeight());
 
@@ -773,7 +774,7 @@ bool SSScreenFXPost::renderLens(LLRenderTarget* src, LLRenderTarget* dst)
     dst->bindTarget();
 
     gSSPostLensProgram.bind();
-    gSSPostLensProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src, false, LLTexUnit::TFO_BILINEAR);
+    gSSPostLensProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src);
 
     // Bound by hand onto the next free unit rather than through enableTexture, which resolves a STANDARD uniform name (normalMap and
     // friends); this sampler is the pass's own.
@@ -781,9 +782,7 @@ bool SSScreenFXPost::renderLens(LLRenderTarget* src, LLRenderTarget* dst)
     if (have_map && mDropMap && mDropMap->getWidth() > 0)
     {
         map_channel = gSSPostLensProgram.mActiveTextureChannels;
-        gGL.getTexUnit(map_channel)->activate();
-        gGL.getTexUnit(map_channel)->bindManual(LLTexUnit::TT_TEXTURE, mDropMap->getTexture(0));
-        gGL.getTexUnit(map_channel)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
+        mDropMap->bindTexture(0, map_channel);
         gSSPostLensProgram.uniform1i(u_dropmap, map_channel);
     }
 
@@ -791,9 +790,7 @@ bool SSScreenFXPost::renderLens(LLRenderTarget* src, LLRenderTarget* dst)
     if (mClearMap && mClearMap->getWidth() > 0)
     {
         clear_channel = (map_channel > -1) ? (map_channel + 1) : gSSPostLensProgram.mActiveTextureChannels;
-        gGL.getTexUnit(clear_channel)->activate();
-        gGL.getTexUnit(clear_channel)->bindManual(LLTexUnit::TT_TEXTURE, mClearMap->getTexture(0));
-        gGL.getTexUnit(clear_channel)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
+        mClearMap->bindTexture(0, clear_channel);
         gSSPostLensProgram.uniform1i(u_clearmap, clear_channel);
     }
 
@@ -831,13 +828,12 @@ bool SSScreenFXPost::renderLens(LLRenderTarget* src, LLRenderTarget* dst)
     gSSPostLensProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE);
     if (clear_channel > -1)
     {
-        gGL.getTexUnit(clear_channel)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(clear_channel)->unbind();
     }
     if (map_channel > -1)
     {
-        gGL.getTexUnit(map_channel)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(map_channel)->unbind();
     }
-    gGL.getTexUnit(0)->activate();
     gSSPostLensProgram.unbind();
     dst->flush();
 

@@ -488,7 +488,7 @@ void LLGLTFLoader::processNodeHierarchy(S32 node_idx, std::map<std::string, S32>
                 // (based of values the 'bento shoes' mesh might be missing 90 degrees horizontaly
                 // prior to skinning)
 
-                pModel->mSkinInfo.mBindShapeMatrix.loadu(mesh_scale);
+                pModel->mSkinInfo.mBindShapeMatrix.loadu(&mesh_scale.mMatrix[0][0]);
                 LL_INFOS("GLTF_DEBUG") << "Model: " << pModel->mLabel << " mBindShapeMatrix: " << pModel->mSkinInfo.mBindShapeMatrix << LL_ENDL;
             }
 
@@ -1527,7 +1527,7 @@ void LLGLTFLoader::buildOverrideMatrix(LLJointData& viewer_data, joints_data_map
         S32 gltf_node_idx = found_node->second;
         JointNodeData& node = gltf_nodes[gltf_node_idx];
         node.mIsOverrideValid = true;
-        node.mViewerRestMatrix = viewer_data.mRestMatrix;
+        node.mViewerRestMatrix = glm::make_mat4(viewer_data.mRestMatrix.getF32ptr()); // SKOOMA-PORT: LLJointData is LLMatrix4a now
 
         glm::mat4 gltf_joint_rest_pose = coord_system_rotation * node.mGltfRestMatrix;
         if (mApplyXYRotation)
@@ -1578,14 +1578,14 @@ void LLGLTFLoader::buildOverrideMatrix(LLJointData& viewer_data, joints_data_map
             // then subsctruct them from bind matrix
             // Todo: get models that use collision bones, made by different programs
 
-            overriden_joint = glm::scale(overriden_joint, viewer_data.mScale);
+            overriden_joint = glm::scale(overriden_joint, glm::make_vec3(viewer_data.mScale.mV));
             node.mOverrideRestMatrix = parent_support_rest * overriden_joint;
         }
     }
     else
     {
         // No override for this joint
-        rest = parent_rest * viewer_data.mJointMatrix;
+        rest = parent_rest * glm::make_mat4(viewer_data.mJointMatrix.getF32ptr());
     }
 
     glm::mat4 support_rest(1.f);

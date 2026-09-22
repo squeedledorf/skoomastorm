@@ -44,6 +44,7 @@
 #include "llviewershadermgr.h" // <SS:Nexii> info-view look: gSSInfoLookProgram
 #include "llviewerwindow.h" // <SS:Nexii> gViewerWindow setup3DRender for the look pass and the in-world layer
 #include "pipeline.h"
+#include "ssglmcompat.h"
 #include "ssinfolookcore.h" // <SS:Nexii> info-view look: LOOK_KEY_ELEVATION, and the formulas the look shader transliterates
 
 #include "ssatmoenvapplier.h"
@@ -840,25 +841,23 @@ void SSAtmoInfoView::renderInfoLook()
     gSSInfoLookProgram.bind();
 
     // The presented colour goes on diffuseRect (DEFERRED_DIFFUSE) - this shader's own declaration of that name, not the G-buffer's.
-    S32 channel = gSSInfoLookProgram.enableTexture(LLShaderMgr::DEFERRED_DIFFUSE, presented->getUsage());
+    S32 channel = gSSInfoLookProgram.enableTexture(LLShaderMgr::DEFERRED_DIFFUSE);
     if (channel > -1)
     {
-        presented->bindTexture(0, channel, LLTexUnit::TFO_POINT);
-        gGL.getTexUnit(channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
+        presented->bindTexture(0, channel, ALSamplers::PointClamp);
     }
 
     // Attachment 2 of deferredScreen is frag_data[2]: the packed normal, plus the gbuffer flag in w that the sky test reads.
-    channel = gSSInfoLookProgram.enableTexture(LLShaderMgr::NORMAL_MAP, gbuf->getUsage());
+    channel = gSSInfoLookProgram.enableTexture(LLShaderMgr::NORMAL_MAP);
     if (channel > -1)
     {
-        gbuf->bindTexture(2, channel, LLTexUnit::TFO_POINT);
-        gGL.getTexUnit(channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
+        gbuf->bindTexture(2, channel, ALSamplers::PointClamp);
     }
 
-    channel = gSSInfoLookProgram.enableTexture(LLShaderMgr::DEFERRED_DEPTH, gbuf->getUsage());
+    channel = gSSInfoLookProgram.enableTexture(LLShaderMgr::DEFERRED_DEPTH);
     if (channel > -1)
     {
-        gGL.getTexUnit(channel)->bind(gbuf, true);
+        gGL.getTextureSlot(channel)->bind(gbuf, true);
     }
 
     // The two directions, built in world space and carried into view space by the modelview setup3DRender just loaded.
@@ -1023,7 +1022,7 @@ void SSAtmoInfoView::renderWindMast()
     LLGLEnable blend(GL_BLEND);
     LLGLDepthTest depth(GL_FALSE, GL_FALSE); // <SS:Nexii> off, not just no-write: this draws in the 3-D pass AFTER SSAtmoInfoView::renderDimAndWorld has laid the dim quad down, on top like a Skylines layer, so it must never be occluded by world geometry
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     auto line = [&](const LLVector3& a, const LLVector3& b)
     {
@@ -1449,7 +1448,7 @@ void SSAtmoInfoView::renderStormCells()
     LLGLEnable blend(GL_BLEND);
     LLGLDepthTest depth(GL_FALSE, GL_FALSE); // <SS:Nexii> off, not just no-write: this draws in the 3-D pass AFTER SSAtmoInfoView::renderDimAndWorld has laid the dim quad down, on top like a Skylines layer, so it must never be occluded by world geometry
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     // Filled lattice tiles first (two triangles each), so every line lands on top of them. V2 lattice-tint
     // smoothing (doc/atmo_magic_phase8_show.md section 3 item 2): each tile's SPAWN-DECISION quantity is still one
@@ -1894,7 +1893,7 @@ void SSAtmoInfoView::renderDeckLod()
     LLGLEnable blend(GL_BLEND);
     LLGLDepthTest depth(GL_FALSE, GL_FALSE); // <SS:Nexii> off, not just no-write: this draws in the 3-D pass AFTER SSAtmoInfoView::renderDimAndWorld has laid the dim quad down, on top like a Skylines layer, so it must never be occluded by world geometry
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     // Tinted tiles: a fixed pitch (coarser than the builder's own SSDeckLod::CELL_M, since this is a display
     // sampling of a pure distance function, not a cell-for-cell replay), covering the ramp's whole reach.
@@ -2058,7 +2057,7 @@ void SSAtmoInfoView::renderVirga()
     LLGLEnable blend(GL_BLEND);
     LLGLDepthTest depth(GL_FALSE, GL_FALSE); // <SS:Nexii> off, not just no-write: this draws in the 3-D pass AFTER SSAtmoInfoView::renderDimAndWorld has laid the dim quad down, on top like a Skylines layer, so it must never be occluded by world geometry
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     auto line = [&](const LLVector3& a, const LLVector3& b)
     {
@@ -2226,7 +2225,7 @@ void SSAtmoInfoView::renderAcoustics()
     LLGLEnable blend(GL_BLEND);
     LLGLDepthTest depth(GL_FALSE, GL_FALSE); // on top like a Skylines layer, never occluded
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     const LLColor4 LINK_AIR   (0.55f, 0.60f, 0.70f, 0.16f);
     const LLColor4 LINK_PORTAL(1.00f, 0.85f, 0.30f, 0.65f);
@@ -2429,7 +2428,7 @@ void SSAtmoInfoView::renderLightning()
     LLGLEnable blend(GL_BLEND);
     LLGLDepthTest depth(GL_FALSE, GL_FALSE); // <SS:Nexii> off, not just no-write: this draws in the 3-D pass after the look pass, on top like a Skylines layer, so it must never be occluded by world geometry
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     // A straight world-space line, subdivided so the far squash bends it rather than shearing it - the same
     // idiom renderVirga's own line lambda uses.
@@ -3097,7 +3096,7 @@ void SSAtmoLegendView::draw()
         if (spec.mRamp)
         {
             const S32 strips = 32;
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTextureSlot(0)->unbind();
             for (S32 i = 0; i < strips; ++i)
             {
                 const S32 x0 = PAD + (bar_w * i) / strips;
@@ -3152,7 +3151,7 @@ SSAtmoGraphView::SSAtmoGraphView(const Params& p)
 void SSAtmoGraphView::polyline(const std::vector<std::pair<S32, S32> >& pts, const LLColor4& color, bool dashed)
 {
     if (pts.size() < 2) return;
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
     gGL.color4fv(color.mV);
     if (dashed)
     {
@@ -3509,7 +3508,7 @@ void SSAtmoGraphView::drawStormCells()
         const S32 bar_bottom = bar_top - bar_h;
 
         // Stage bands, bright up to now, dim beyond it.
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
         for (S32 s = 0; s < STAGE_COUNT; ++s)
         {
             const S32 x0 = bar_left + (S32)floor(kBounds[s] * (F32)bar_w + 0.5f);

@@ -988,6 +988,7 @@ void LLViewerRegion::setOriginGlobal(const LLVector3d &origin_global)
 
 void LLViewerRegion::updateRenderMatrix()
 {
+    mRenderMatrix.setIdentity(); // SKOOMA-PORT: LLMatrix4a does not default to identity
     mRenderMatrix.setTranslation(getOriginAgent());
 }
 
@@ -1757,19 +1758,7 @@ void LLViewerRegion::idleUpdate(F32 max_update_time)
 
     mLastUpdate = LLViewerOctreeEntryData::getCurrentFrame();
 
-    static LLCachedControl<bool> pbr_terrain_enabled(gSavedSettings, "RenderTerrainPBREnabled", false);
-    static LLCachedControl<bool> pbr_terrain_experimental_normals(gSavedSettings, "RenderTerrainPBRNormalsEnabled", false);
-    bool pbr_material = mImpl->mCompositionp && (mImpl->mCompositionp->getMaterialType() == LLTerrainMaterials::Type::PBR);
-    bool pbr_land = pbr_material && pbr_terrain_enabled && pbr_terrain_experimental_normals;
-
-    if (!pbr_land)
-    {
-        mImpl->mLandp->idleUpdate</*PBR=*/false>(max_update_time);
-    }
-    else
-    {
-        mImpl->mLandp->idleUpdate</*PBR=*/true>(max_update_time);
-    }
+    mImpl->mLandp->idleUpdate(max_update_time); // SKOOMA-PORT: Alchemy GPU terrain, one update path
 
     if (mParcelOverlay)
     {
@@ -2077,19 +2066,7 @@ void LLViewerRegion::forceUpdate()
 {
     constexpr F32 max_update_time = 0.f;
 
-    static LLCachedControl<bool> pbr_terrain_enabled(gSavedSettings, "RenderTerrainPBREnabled", false);
-    static LLCachedControl<bool> pbr_terrain_experimental_normals(gSavedSettings, "RenderTerrainPBRNormalsEnabled", false);
-    bool pbr_material = mImpl->mCompositionp && (mImpl->mCompositionp->getMaterialType() == LLTerrainMaterials::Type::PBR);
-    bool pbr_land = pbr_material && pbr_terrain_enabled && pbr_terrain_experimental_normals;
-
-    if (!pbr_land)
-    {
-        mImpl->mLandp->idleUpdate</*PBR=*/false>(max_update_time);
-    }
-    else
-    {
-        mImpl->mLandp->idleUpdate</*PBR=*/true>(max_update_time);
-    }
+    mImpl->mLandp->idleUpdate(max_update_time); // SKOOMA-PORT: Alchemy GPU terrain, one update path
 
     if (mParcelOverlay)
     {

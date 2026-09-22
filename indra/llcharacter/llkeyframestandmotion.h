@@ -37,11 +37,9 @@
 //-----------------------------------------------------------------------------
 // class LLKeyframeStandMotion
 //-----------------------------------------------------------------------------
-LL_ALIGN_PREFIX(16)
-class LLKeyframeStandMotion :
+class alignas(16) LLKeyframeStandMotion :
     public LLKeyframeMotion
 {
-    LL_ALIGN_NEW
 public:
     // Constructor
     LLKeyframeStandMotion(const LLUUID &id);
@@ -112,7 +110,7 @@ public:
     bool                mTrackAnkles;
 
     S32                 mFrameNum;
-} LL_ALIGN_POSTFIX(16);
+};
 
 #endif // LL_LLKEYFRAMESTANDMOTION_H
 

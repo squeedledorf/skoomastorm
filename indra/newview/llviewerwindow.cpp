@@ -190,13 +190,13 @@
 #include "llworld.h"
 #include "llworldmapview.h"
 #include "pipeline.h"
+#include "ssglmcompat.h"
 #include "llappviewer.h"
 #include "llviewerdisplay.h"
 #include "llspatialpartition.h"
 #include "llviewerjoystick.h"
 #include "llviewermenufile.h" // LLFilePickerReplyThread
 #include "llviewernetwork.h"
-#include "llpostprocess.h"
 // <FS:Ansariel> [FS communication UI]
 //#include "llfloaterimnearbychat.h"
 // </FS:Ansariel> [FS communication UI]
@@ -273,8 +273,6 @@ LLVector2        gDebugRaycastTexCoord;
 LLVector4a       gDebugRaycastNormal;
 LLVector4a       gDebugRaycastTangent;
 S32             gDebugRaycastFaceHit;
-S32             gDebugRaycastGLTFNodeHit;
-S32             gDebugRaycastGLTFPrimitiveHit;
 LLVector4a       gDebugRaycastStart;
 LLVector4a       gDebugRaycastEnd;
 
@@ -846,14 +844,16 @@ public:
         {
             char camera_lines[8][32];
             memset(camera_lines, ' ', sizeof(camera_lines));
+            const F32* projection = LLViewerCamera::getCurrent().getProjection().getF32ptr();
+            const F32* modelview = LLViewerCamera::getCurrent().getModelview().getF32ptr();
 
             // Projection last column is always <0,0,-1.0001,0>
             // Projection last row is always <0,0,-0.2>
             mBackRectCamera1.mBottom = ypos - y_inc + 2;
-            MATRIX_ROW_N32_TO_STR(gGLProjection, 12,camera_lines[7]); addText(xpos, ypos, std::string(camera_lines[7])); ypos += y_inc;
-            MATRIX_ROW_N32_TO_STR(gGLProjection,  8,camera_lines[6]); addText(xpos, ypos, std::string(camera_lines[6])); ypos += y_inc;
-            MATRIX_ROW_N32_TO_STR(gGLProjection,  4,camera_lines[5]); addText(xpos, ypos, std::string(camera_lines[5])); ypos += y_inc; mBackRectCamera1.mTop    = ypos + 2;
-            MATRIX_ROW_N32_TO_STR(gGLProjection,  0,camera_lines[4]); addText(xpos, ypos, std::string(camera_lines[4])); ypos += y_inc; mBackRectCamera2.mBottom = ypos + 2;
+            MATRIX_ROW_N32_TO_STR(projection, 12,camera_lines[7]); addText(xpos, ypos, std::string(camera_lines[7])); ypos += y_inc;
+            MATRIX_ROW_N32_TO_STR(projection,  8,camera_lines[6]); addText(xpos, ypos, std::string(camera_lines[6])); ypos += y_inc;
+            MATRIX_ROW_N32_TO_STR(projection,  4,camera_lines[5]); addText(xpos, ypos, std::string(camera_lines[5])); ypos += y_inc; mBackRectCamera1.mTop    = ypos + 2;
+            MATRIX_ROW_N32_TO_STR(projection,  0,camera_lines[4]); addText(xpos, ypos, std::string(camera_lines[4])); ypos += y_inc; mBackRectCamera2.mBottom = ypos + 2;
 
             addText(xpos, ypos, "Projection Matrix");
             ypos += y_inc;
@@ -864,13 +864,13 @@ public:
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #endif
             // View last column is always <0,0,0,1>
-            MATRIX_ROW_F32_TO_STR(gGLModelView, 12,camera_lines[3]); addText(xpos, ypos, std::string(camera_lines[3])); ypos += y_inc;
+            MATRIX_ROW_F32_TO_STR(modelview, 12,camera_lines[3]); addText(xpos, ypos, std::string(camera_lines[3])); ypos += y_inc;
 #if LL_DARWIN
 #pragma clang diagnostic pop
 #endif
-            MATRIX_ROW_N32_TO_STR(gGLModelView,  8,camera_lines[2]); addText(xpos, ypos, std::string(camera_lines[2])); ypos += y_inc;
-            MATRIX_ROW_N32_TO_STR(gGLModelView,  4,camera_lines[1]); addText(xpos, ypos, std::string(camera_lines[1])); ypos += y_inc; mBackRectCamera2.mTop = ypos + 2;
-            MATRIX_ROW_N32_TO_STR(gGLModelView,  0,camera_lines[0]); addText(xpos, ypos, std::string(camera_lines[0])); ypos += y_inc;
+            MATRIX_ROW_N32_TO_STR(modelview,  8,camera_lines[2]); addText(xpos, ypos, std::string(camera_lines[2])); ypos += y_inc;
+            MATRIX_ROW_N32_TO_STR(modelview,  4,camera_lines[1]); addText(xpos, ypos, std::string(camera_lines[1])); ypos += y_inc; mBackRectCamera2.mTop = ypos + 2;
+            MATRIX_ROW_N32_TO_STR(modelview,  0,camera_lines[0]); addText(xpos, ypos, std::string(camera_lines[0])); ypos += y_inc;
 
             addText(xpos, ypos, "View Matrix");
             ypos += y_inc;
@@ -2143,10 +2143,6 @@ LLViewerWindow::LLViewerWindow(const Params& p)
     }
 
     LLFontManager::initClass();
-
-    // fonts use an GL_UNSIGNED_BYTE image format,
-    // so they need convertion, init buffers if needed
-    LLImageGL::allocateConversionBuffer();
 
     // Init font system, load default fonts and generate basic glyphs
     // currently it takes aprox. 0.5 sec and we would load these fonts anyway
@@ -4006,11 +4002,9 @@ void LLViewerWindow::updateUI()
 
     if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_RAYCAST))
     {
-        gDebugRaycastFaceHit = gDebugRaycastGLTFNodeHit = gDebugRaycastGLTFPrimitiveHit = -1;
+        gDebugRaycastFaceHit = -1;
         gDebugRaycastObject = cursorIntersect(-1, -1, 512.f, NULL, -1, false, false, true, false,
                                               &gDebugRaycastFaceHit,
-                                              &gDebugRaycastGLTFNodeHit,
-                                              &gDebugRaycastGLTFPrimitiveHit,
                                               &gDebugRaycastIntersection,
                                               &gDebugRaycastTexCoord,
                                               &gDebugRaycastNormal,
@@ -5018,8 +5012,8 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
     // This is a link set. The models need an additional transform to modelview
     if (drawable->isActive())
     {
-        gGL.loadMatrix(gGLModelView);
-        gGL.multMatrix((F32*)objectp->getRenderMatrix().mMatrix);
+        gGL.loadMatrix(LLViewerCamera::getCurrent().getModelview());
+        gGL.multMatrix(objectp->getRenderMatrix());
     }
 
     gGL.multMatrix((F32*)vovolume->getRelativeXform().mMatrix);
@@ -5319,13 +5313,13 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
                 // setup opengl common parameters before we iterate over each object
                 gGL.pushMatrix();
                 //Need to because crash on ATI 3800 (and similar cards) MAINT-5018
-                LLGLDisable multisample(LLPipeline::RenderFSAAType > 0 ? GL_MULTISAMPLE_ARB : 0);
+                LLGLDisable multisample(LLPipeline::RenderFSAAType > 0 ? GL_MULTISAMPLE : 0);
                 LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
                 if (shader)
                 {
                     gDebugProgram.bind();
                 }
-                gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE); // no textures needed
+                gGL.getTextureSlot(0)->unbind(); // no textures needed
                 glClearColor(0, 0, 0, 0); // bg black
                 gGL.setColorMask(true, true); // write color and alpha info
                 gGL.color4f(1.f, 1.f, 1.f, 0.5);
@@ -5376,7 +5370,7 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
         // Render light for editing
         if (LLSelectMgr::sRenderLightRadius && LLToolMgr::getInstance()->inEdit())
         {
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTextureSlot(0)->unbind();
             LLGLEnable gls_blend(GL_BLEND);
             LLGLEnable gls_cull(GL_CULL_FACE);
             LLGLDepthTest gls_depth(GL_TRUE, GL_FALSE);
@@ -5651,8 +5645,6 @@ LLViewerObject* LLViewerWindow::cursorIntersect(S32 mouse_x, S32 mouse_y, F32 de
                                                 bool pick_unselectable,
                                                 bool pick_reflection_probe,
                                                 S32* face_hit,
-                                                S32* gltf_node_hit,
-                                                S32* gltf_primitive_hit,
                                                 LLVector4a *intersection,
                                                 LLVector2 *uv,
                                                 LLVector4a *normal,
@@ -5753,7 +5745,7 @@ LLViewerObject* LLViewerWindow::cursorIntersect(S32 mouse_x, S32 mouse_y, F32 de
         if (!found) // if not found in HUD, look in world:
         {
             found = gPipeline.lineSegmentIntersectInWorld(mw_start, mw_end, pick_transparent, pick_rigged, pick_unselectable, pick_reflection_probe,
-                                                          face_hit, gltf_node_hit, gltf_primitive_hit, intersection, uv, normal, tangent);
+                                                          face_hit, intersection, uv, normal, tangent);
             if (found && !pick_transparent)
             {
                 gDebugRaycastIntersection = *intersection;
@@ -7217,11 +7209,6 @@ void LLViewerWindow::stopGL()
 
         gBox.cleanupGL();
 
-        if(gPostProcess)
-        {
-            gPostProcess->invalidate();
-        }
-
         gTextureList.destroyGL();
         stop_glerror();
 
@@ -7650,7 +7637,7 @@ void LLPickInfo::fetchResults()
         icon_dist = delta.getLength3().getF32();
     }
     LLViewerObject* hit_object = gViewerWindow->cursorIntersect(mMousePt.mX, mMousePt.mY, 512.f,
-                                    nullptr, -1, mPickTransparent, mPickRigged, mPickUnselectable, mPickReflectionProbe, &face_hit, &mGLTFNodeIndex, &mGLTFPrimitiveIndex,
+                                    nullptr, -1, mPickTransparent, mPickRigged, mPickUnselectable, mPickReflectionProbe, &face_hit,
                                 &intersection, &uv, &normal, &tangent, &start, &end);
 
     mPickPt = mMousePt;
@@ -7813,8 +7800,6 @@ void LLPickInfo::getSurfaceInfo()
         if (gViewerWindow->cursorIntersect(ll_round((F32)mMousePt.mX), ll_round((F32)mMousePt.mY), 1024.f,
                                            objectp, -1, mPickTransparent, mPickRigged, mPickUnselectable, mPickReflectionProbe,
                                            &mObjectFace,
-                                           &mGLTFNodeIndex,
-                                           &mGLTFPrimitiveIndex,
                                            &intersection,
                                            &mSTCoords,
                                            &normal,

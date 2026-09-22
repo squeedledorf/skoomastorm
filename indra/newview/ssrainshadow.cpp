@@ -41,6 +41,7 @@
 #include "llviewerwindow.h"
 #include "llworld.h"
 #include "pipeline.h"
+#include "ssglmcompat.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -346,7 +347,7 @@ bool SSRainShadowMap::captureTile(Tile& tile)
         gPipeline.clearRenderTypeMask(LLPipeline::RENDER_TYPE_AVATAR,
                                       LLPipeline::RENDER_TYPE_CONTROL_AV,
                                       LLPipeline::END_RENDER_TYPES);
-        gPipeline.renderShadow(view, proj, shadow_cam, cull_result, true);
+        gPipeline.renderShadow(ss_from_glm(view), ss_from_glm(proj), shadow_cam, cull_result, true);
         gPipeline.popRenderTypeMask();
     }
 
@@ -969,7 +970,7 @@ void SSRainShadowMap::buildDebugGrid(const Tile& tile, DebugGrid& grid)
 static void beginWorldDebug()
 {
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 }
 
 // View 0: the capture's own texels, each drawn as the footprint it covers.
@@ -1135,11 +1136,14 @@ void SSRainShadowMap::drawDepthMap()
             }
         }
 
-        if (mDebugMapTex == 0) LLImageGL::generateTextures(1, &mDebugMapTex);
-        gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mDebugMapTex);
-        LLImageGL::setManualImage(GL_TEXTURE_2D, 0, GL_RGBA8, (S32)res, (S32)res, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data(), false);
+        // SKOOMA-PORT: storage is immutable now, so each rebuild makes a fresh texture.
+        if (mDebugMapTex != 0) LLImageGL::deleteTextures(1, &mDebugMapTex);
+        LLImageGL::generateTextures(1, &mDebugMapTex);
+        gGL.getTextureSlot(0)->bindManual(ALTextureSlot::TT_TEXTURE, mDebugMapTex);
+        LLImageGL::allocateTexture2D(GL_TEXTURE_2D, GL_RGBA8, (S32)res, (S32)res, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
         // Point filtering, and no mips - a smoothed debug map would hide exactly the single-texel holes it is here to show.
-        gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
         mDebugMapFrom = tile->mCaptureTime;
         mDebugMapRegion = handle;
@@ -1171,7 +1175,7 @@ void SSRainShadowMap::drawDepthMap()
         LLGLDisable depth_test(GL_DEPTH_TEST);
         gGL.setSceneBlendType(LLRender::BT_ALPHA);
 
-        gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mDebugMapTex);
+        gGL.getTextureSlot(0)->bindManual(ALTextureSlot::TT_TEXTURE, mDebugMapTex);
         gGL.color4f(1.f, 1.f, 1.f, 1.f);
         gGL.begin(LLRender::TRIANGLES);
         // Flipped in v: the capture's first row is the bottom of the map plane, and ortho here puts y=0 at the screen's bottom, so an unflipped draw would show it upside down against the world.
@@ -1183,7 +1187,7 @@ void SSRainShadowMap::drawDepthMap()
         gGL.texCoord2f(0.f, 0.f); gGL.vertex3f(x0, y1, 0.f);
         gGL.end();
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
         gGL.color4f(0.35f, 0.75f, 1.f, 0.9f);
         gGL.begin(LLRender::LINES);
         gGL.vertex3f(x0, y0, 0.f); gGL.vertex3f(x1, y0, 0.f);

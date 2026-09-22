@@ -578,7 +578,7 @@ void LLFloaterBvhPreview::draw()
         {
         // </FS>
         gGL.color3f(1.f, 1.f, 1.f);
-        gGL.getTexUnit(0)->bind(mAnimPreview);
+        gGL.getTextureSlot(0)->bindSampled(mAnimPreview, ALSamplers::AnisoWrap);
 
         gGL.begin(LLRender::TRIANGLES);
         {
@@ -598,7 +598,7 @@ void LLFloaterBvhPreview::draw()
         }
         gGL.end();
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
         // <FS> Preview on own avatar
         //LLVOAvatar* avatarp = mAnimPreview->getDummyAvatar();
         }
@@ -1493,7 +1493,7 @@ void LLFloaterBvhPreview::onBtnReload(void* userdata)
 //-----------------------------------------------------------------------------
 // LLPreviewAnimation
 //-----------------------------------------------------------------------------
-LLPreviewAnimation::LLPreviewAnimation(S32 width, S32 height) : LLViewerDynamicTexture(width, height, 3, ORDER_MIDDLE, false)
+LLPreviewAnimation::LLPreviewAnimation(S32 width, S32 height) : LLViewerDynamicTexture(width, height, 3, ORDER_MIDDLE)
 {
     mNeedsUpdate = true;
     mCameraDistance = PREVIEW_CAMERA_DISTANCE;
@@ -1552,7 +1552,7 @@ bool    LLPreviewAnimation::render()
     gUIProgram.bind();
 
     LLGLSUIDefault def;
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
     gGL.color4f(0.15f, 0.2f, 0.3f, 1.f);
 
     gl_rect_2d_simple( mFullWidth, mFullHeight );
@@ -1573,10 +1573,10 @@ bool    LLPreviewAnimation::render()
     LLViewerCamera* camera = LLViewerCamera::getInstance();
 
     LLQuaternion av_rot = avatarp->mRoot->getWorldRotation() * camera_rot;
-    camera->setOriginAndLookAt(
+    camera->lookAt(
         target_pos + ((LLVector3(mCameraDistance, 0.f, 0.f) + mCameraOffset) * av_rot),     // camera
-        LLVector3::z_axis,                                                                  // up
-        target_pos + (mCameraOffset  * av_rot) );                                           // point of interest
+        target_pos + (mCameraOffset  * av_rot), // point of interest
+        LLVector3::z_axis); // up
 
     camera->setViewNoBroadcast(LLViewerCamera::getInstance()->getDefaultFOV() / mCameraZoom);
     camera->setAspect((F32) mFullWidth / (F32) mFullHeight);

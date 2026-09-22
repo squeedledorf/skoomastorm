@@ -325,7 +325,7 @@ void SSAtmoEnvApplier::renderCelestialDebug()
         mDebugLabels.pop_back();
     }
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
     LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
     LLGLEnable blend(GL_BLEND);
     LLGLDepthTest depth(GL_FALSE);

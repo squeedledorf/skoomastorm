@@ -1638,7 +1638,7 @@ void SSWorldFieldShapes::renderDebug()
     LLGLEnable blend(GL_BLEND);
     LLGLDepthTest depth(GL_TRUE, GL_FALSE);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
     gGL.begin(LLRender::LINES);
 
     for (const Record& rec : mCensus.mRecords)

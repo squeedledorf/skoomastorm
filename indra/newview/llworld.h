@@ -32,7 +32,7 @@
 #ifndef LL_LLWORLD_H
 #define LL_LLWORLD_H
 
-#include "llpatchvertexarray.h"
+// SKOOMA-PORT: llpatchvertexarray.h is gone with the CPU terrain LOD.
 #include <set>
 #include <map>
 
@@ -315,7 +315,6 @@ private:
     bool mLimitsNeedRefresh;
 // </AW: opensim-limits>
     F32 mLandFarClip;                   // Far clip distance for land.
-    LLPatchVertexArray      mLandPatch;
     S32 mLastPacketsIn;
     S32 mLastPacketsOut;
     S32 mLastPacketsLost;

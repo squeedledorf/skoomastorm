@@ -384,15 +384,7 @@ LLVector3 LLManip::getPivotPoint()
     LLViewerObject* root_object = mObjectSelection->getFirstRootObject(children_ok);
     if (root_object && (mObjectSelection->getObjectCount() == 1 || sActualRoot) && mObjectSelection->getSelectType() != SELECT_TYPE_HUD)
     {
-        LLSelectNode* select_node = mObjectSelection->getFirstNode();
-        if (select_node->mSelectedGLTFNode != -1)
-        {
-            pos = root_object->getGLTFNodePositionAgent(select_node->mSelectedGLTFNode);
-        }
-        else
-        {
-            pos = root_object->getPivotPositionAgent();
-        }
+        pos = root_object->getPivotPositionAgent(); // SKOOMA-PORT: GLTF scene nodes removed with Alchemy's PMFP cleanup
         scale = root_object->getScale();
         rot = root_object->getRotation();
     }
@@ -456,7 +448,7 @@ void LLManip::renderGuidelines(bool draw_x, bool draw_y, bool draw_z)
 
         const F32 LINE_ALPHA = 0.33f;
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
         LLUI::setLineWidth(1.5f);
 
         // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)

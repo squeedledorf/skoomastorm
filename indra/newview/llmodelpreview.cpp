@@ -136,7 +136,7 @@ LLViewerFetchedTexture* bindMaterialDiffuseTexture(const LLImportMaterial& mater
     {
         if (texture->getDiscardLevel() > -1)
         {
-            gGL.getTexUnit(0)->bind(texture, true);
+            gGL.getTextureSlot(0)->bindSampled(texture, ALSamplers::AnisoWrap);
             return texture;
         }
     }
@@ -210,7 +210,7 @@ static bool FindModel(const LLModelLoader::scene& scene, const std::string& name
 //-----------------------------------------------------------------------------
 
 LLModelPreview::LLModelPreview(S32 width, S32 height, LLFloater* fmp)
-    : LLViewerDynamicTexture(width, height, 3, ORDER_MIDDLE, false), LLMutex()
+    : LLViewerDynamicTexture(width, height, 3, ORDER_MIDDLE), LLMutex()
     , mLodsQuery()
     , mLodsWithParsingError()
     , mPelvisZOffset(0.0f)
@@ -4559,10 +4559,10 @@ bool LLModelPreview::render()
 
     LLQuaternion av_rot = camera_rot;
     F32 camera_distance = show_skin_weight ? SKIN_WEIGHT_CAMERA_DISTANCE : mCameraDistance;
-    LLViewerCamera::getInstance()->setOriginAndLookAt(
+    LLViewerCamera::getInstance()->lookAt(
         target_pos + ((LLVector3(camera_distance, 0.f, 0.f) + offset) * av_rot),        // camera
-        LLVector3::z_axis,                                                                  // up
-        target_pos);                                            // point of interest
+        target_pos, // point of interest
+        LLVector3::z_axis); // up
 
 
     z_near = llclamp(z_far * 0.001f, 0.001f, 0.1f);
@@ -4658,7 +4658,7 @@ bool LLModelPreview::render()
                         {
                             if (mUVGuideTexture->getDiscardLevel() > -1)
                             {
-                                gGL.getTexUnit(0)->bind(mUVGuideTexture, true);
+                                gGL.getTextureSlot(0)->bindSampled(mUVGuideTexture, ALSamplers::AnisoWrap);
                             }
                         }
                         gGL.diffuseColor4fv(base_col().mV); // <FS:Beq/> restore changes removed by the lab
@@ -4677,7 +4677,7 @@ bool LLModelPreview::render()
                     buffer->setBuffer();
                     buffer->drawRange(LLRender::TRIANGLES, 0, buffer->getNumVerts() - 1, buffer->getNumIndices(), 0);
 
-                    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                    gGL.getTextureSlot(0)->unbind();
                     gGL.diffuseColor4fv(edge_col().mV); // <FS:Beq/> restore changes removed by the lab
                     if (show_edges)
                     {
@@ -4797,7 +4797,7 @@ bool LLModelPreview::render()
                             {
                                 for (size_t i = 0; i < num_models; ++i)
                                 {
-                                    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                                    gGL.getTextureSlot(0)->unbind();
                                     gGL.diffuseColor4fv(phys_fill_col().mV); // <FS:Beq/> restore changes removed by the lab
 
                                     // Zero this variable for an obligatory buffer initialization
@@ -4929,10 +4929,10 @@ bool LLModelPreview::render()
             getPreviewAvatar()->addPelvisFixup(mPelvisZOffset, fake_mesh_id);
             bool pelvis_recalc = false;
 
-            LLViewerCamera::getInstance()->setOriginAndLookAt(
+            LLViewerCamera::getInstance()->lookAt(
                 target_pos + ((LLVector3(camera_distance, 0.f, 0.f) + offset) * av_rot),        // camera
-                LLVector3::z_axis,                                                                  // up
-                target_pos);                                            // point of interest
+                target_pos, // point of interest
+                LLVector3::z_axis); // up
 
             for (LLModelLoader::scene::iterator iter = mScene[mPreviewLOD].begin(); iter != mScene[mPreviewLOD].end(); ++iter)
             {
@@ -4997,7 +4997,7 @@ bool LLModelPreview::render()
                             model->mSkinInfo.updateHash();
                             LLRenderPass::uploadMatrixPalette(mPreviewAvatar, &model->mSkinInfo);
 
-                            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                            gGL.getTextureSlot(0)->unbind();
 
                             if (show_textures)
                             {
@@ -5034,7 +5034,7 @@ bool LLModelPreview::render()
 
                             if (show_edges)
                             {
-                                gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                                gGL.getTextureSlot(0)->unbind();
                                 // <FS:Beq> restore behaviour removed by lab
                                 // gGL.diffuseColor4fv(PREVIEW_EDGE_COL.mV);
                                 // gGL.setLineWidth(PREVIEW_EDGE_WIDTH);

@@ -38,6 +38,18 @@
 using namespace LL::GLTF;
 using namespace boost::json;
 
+// SKOOMA-PORT: LLGLSLShader::GLTFVariant went with the PMFP renderer; same bit values kept here
+namespace
+{
+    struct GLTFVariant
+    {
+        constexpr static U8 ALPHA_BLEND = 1;
+        constexpr static U8 RIGGED = 2;
+        constexpr static U8 UNLIT = 4;
+        constexpr static U8 MULTI_UV = 8;
+    };
+}
+
 
 // Mesh data useful for Mikktspace tangent generation (and flat normal generation)
 struct MikktMesh
@@ -402,7 +414,7 @@ bool Primitive::prep(Asset& asset)
 
     if (!mWeights.empty())
     {
-        mShaderVariant |= LLGLSLShader::GLTFVariant::RIGGED;
+        mShaderVariant |= GLTFVariant::RIGGED;
         mask |= LLVertexBuffer::MAP_WEIGHT4;
         mask |= LLVertexBuffer::MAP_JOINT;
     }
@@ -440,13 +452,13 @@ bool Primitive::prep(Asset& asset)
 
         if (material.mUnlit.mPresent)
         { // material uses KHR_materials_unlit
-            mShaderVariant |= LLGLSLShader::GLTFVariant::UNLIT;
+            mShaderVariant |= GLTFVariant::UNLIT;
             unlit = true;
         }
 
         if (material.isMultiUV())
         {
-            mShaderVariant |= LLGLSLShader::GLTFVariant::MULTI_UV;
+            mShaderVariant |= GLTFVariant::MULTI_UV;
         }
     }
 
@@ -457,7 +469,7 @@ bool Primitive::prep(Asset& asset)
         if (mMode == Mode::POINTS || mMode == Mode::LINES || mMode == Mode::LINE_LOOP || mMode == Mode::LINE_STRIP)
         { //no normals and no surfaces, this primitive is unlit
             mTangents.clear();
-            mShaderVariant |= LLGLSLShader::GLTFVariant::UNLIT;
+            mShaderVariant |= GLTFVariant::UNLIT;
             unlit = true;
         }
         else
@@ -528,7 +540,7 @@ bool Primitive::prep(Asset& asset)
         Material& material = asset.mMaterials[mMaterial];
         if (material.mAlphaMode == Material::AlphaMode::BLEND)
         {
-            mShaderVariant |= LLGLSLShader::GLTFVariant::ALPHA_BLEND;
+            mShaderVariant |= GLTFVariant::ALPHA_BLEND;
         }
     }
 

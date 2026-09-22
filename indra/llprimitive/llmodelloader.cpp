@@ -24,12 +24,15 @@
  * $/LicenseInfo$
  */
 
+#include "linden_common.h"
+
 #include "llmodelloader.h"
 
 #include "llapp.h"
 #include "llsdserialize.h"
 #include "lljoint.h"
 #include "llcallbacklist.h"
+#include "workqueue.h"
 
 #include "llmatrix4a.h"
 #include <boost/bind.hpp>
@@ -92,7 +95,7 @@ void LLModelLoader::stretch_extents(const LLModel* model, const LLMatrix4& mat)
     LLVector4a mina, maxa;
     LLMatrix4a mata;
 
-    mata.loadu(mat);
+    mata.set(mat);
     mina.load3(mExtents[0].mV);
     maxa.load3(mExtents[1].mV);
 
@@ -192,9 +195,24 @@ void LLModelLoader::run()
         setLoadState(ERROR_PARSING);
     }
 
-    // todo: we are inside of a thread, push this into main thread worker,
-    // not into doOnIdleOneTime that laks tread safety
-    doOnIdleOneTime(boost::bind(&LLModelLoader::loadModelCallback,this));
+    // Hand completion back to the main thread. run() executes on the loader's
+    // worker thread, and the LLCallbackList behind doOnIdleOneTime() is not
+    // thread-safe -- post through the main loop's WorkQueue instead.
+    LL::WorkQueue::ptr_t main_queue = LL::WorkQueue::getInstance("mainloop");
+    if (main_queue)
+    {
+        main_queue->post(boost::bind(&LLModelLoader::loadModelCallback, this));
+    }
+    else
+    {
+        // No main-loop queue registered. The viewer always has one (a global,
+        // gMainloopWork), so this branch can only run in a binary with no main
+        // loop concurrently using LLCallbackList -- where the idle list is the
+        // only delivery left. loadModelCallback() cannot be invoked inline
+        // here: it blocks until this thread is stopped and then deletes the
+        // loader, which would deadlock run().
+        doOnIdleOneTime(boost::bind(&LLModelLoader::loadModelCallback, this));
+    }
 }
 
 // static
@@ -414,7 +432,7 @@ void LLModelLoader::loadModelCallback()
 
     while (!isStopped())
     { //wait until this thread is stopped before deleting self
-        apr_sleep(100);
+        ms_sleep(100);
     }
 
     //double check if "this" is valid before deleting it, in case it is aborted during running.

@@ -86,6 +86,19 @@ if (HAVOK)
 endif ()
 
 set(viewer_SOURCE_FILES
+    alcolorwheelmodel.cpp
+    alcolorwheelctrl.cpp
+    alcurveeditorctrl.cpp
+    aldaycyclelandmarks.cpp
+    alfloaterlightbox.cpp
+    alfloaterscopes.cpp
+    algradehistory.cpp
+    allightboxdirectory.cpp
+    altoolscenepicker.cpp
+    alcurvemodel.cpp
+    alscopedata.cpp
+    alwhitebalancesolver.cpp
+    lutcube.cpp
 # <Add FS includes below this line>
     alfloaterregiontracker.cpp
     animationexplorer.cpp
@@ -299,7 +312,6 @@ set(viewer_SOURCE_FILES
     vjlocalmeshimportdae.cpp
     fslocalmeshimportgltf.cpp
 
-    gltfscenemanager.cpp
     # <FS:Ansariel> Group GLTF files into their subfolders
     #gltf/asset.cpp
     #gltf/accessor.cpp
@@ -455,7 +467,6 @@ set(viewer_SOURCE_FILES
     llfloaterfonttest.cpp
     llfloaterforgetuser.cpp
     llfloatergesture.cpp
-    llfloatergltfasseteditor.cpp
     llfloatergodtools.cpp
     llfloatergotoline.cpp
     llfloatergridstatus.cpp
@@ -747,7 +758,7 @@ set(viewer_SOURCE_FILES
     llpanelwearing.cpp
     llparcelselection.cpp
     llparticipantlist.cpp
-    llpatchvertexarray.cpp
+    alterrainsurfacemaps.cpp
     llpathfindingcharacter.cpp
     llpathfindingcharacterlist.cpp
     llpathfindinglinkset.cpp
@@ -1037,6 +1048,20 @@ set(VIEWER_BINARY_NAME "firestorm-bin" CACHE STRING
     "The name of the viewer executable to create.")
 
 set(viewer_HEADER_FILES
+    alcolorwheelmodel.h
+    alcolorwheelctrl.h
+    alcurveeditorctrl.h
+    aldaycyclelandmarks.h
+    alfloaterlightbox.h
+    alfloaterscopes.h
+    algradehistory.h
+    allightboxdirectory.h
+    altoolscenepicker.h
+    alcurvemodel.h
+    alscopedata.h
+    alwhitebalancesolver.h
+    lutcube.h
+    altexturetable.h
     CMakeLists.txt
     ViewerInstall.cmake
 
@@ -1215,6 +1240,7 @@ set(viewer_HEADER_FILES
     ssfloatersoundanalysis.h
     ssfloatersoundlist.h
     ssfloatertexturelist.h
+    ssglmcompat.h
     ssfloateratmoplanetary.h
     ssfloaterpreset.h
     ssfloateratmodebug.h
@@ -1280,7 +1306,6 @@ set(viewer_HEADER_FILES
     vjlocalmeshimportdae.h
     fslocalmeshimportgltf.h
 
-    gltfscenemanager.h
     groupchatlistener.h
     # <FS:Ansariel> Group GLTF files into their subfolders
     #gltf/asset.h
@@ -1439,7 +1464,6 @@ set(viewer_HEADER_FILES
     llfloaterfonttest.h
     llfloaterforgetuser.h
     llfloatergesture.h
-    llfloatergltfasseteditor.h
     llfloatergodtools.h
     llfloatergotoline.h
     llfloatergridstatus.h
@@ -1719,7 +1743,7 @@ set(viewer_HEADER_FILES
     llpanelwearing.h
     llparcelselection.h
     llparticipantlist.h
-    llpatchvertexarray.h
+    alterrainsurfacemaps.h
     llpathfindingcharacter.h
     llpathfindingcharacterlist.h
     llpathfindinglinkset.h

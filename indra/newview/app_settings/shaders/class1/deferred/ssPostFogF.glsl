@@ -81,7 +81,8 @@ in vec2 vary_fragcoord;
 // This program is not bound through LLPipeline::bindDeferredShader, so nothing here is assumed
 // present - every uniform the fragment stage reads is declared in THIS file.
 uniform sampler2D depthMap;
-uniform mat4 inv_proj;
+// <SS:Nexii> SKOOMA-PORT: engine UBO (was loose uniforms) - spliced from class1/deferred/matricesBlock.glsl
+//[ENGINE_BLOCK Matrices]
 uniform vec2 screen_res;
 
 // Agent space from view space. The field is anchored to the world; everything the depth buffer hands back is relative to the eye.

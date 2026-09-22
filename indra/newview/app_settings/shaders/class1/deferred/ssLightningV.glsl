@@ -23,7 +23,8 @@
 
 // <SS:Nexii> Atmo Magic lightning
 
-uniform mat4 modelview_projection_matrix;
+// <SS:Nexii> SKOOMA-PORT: engine UBO (was loose uniforms) - spliced from class1/deferred/matricesBlock.glsl
+//[ENGINE_BLOCK Matrices]
 
 // The same far-field squash and ss_squash uniform the puff field's vertex shader applies - one mapping, so a bolt inside a far cloud stays inside it in drawn depth too. Per vertex,
 // each keeps its exact ray from the camera, replacing the old CPU per-strike scale (which collapsed everything beyond a limit onto one shell; this compresses progressively and

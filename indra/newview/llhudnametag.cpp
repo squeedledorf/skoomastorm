@@ -241,9 +241,6 @@ void LLHUDNameTag::renderText()
     }
 
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
-
-    gGL.getTexUnit(0)->enable(LLTexUnit::TT_TEXTURE);
-
     LLColor4 shadow_color(0.f, 0.f, 0.f, 1.f);
     F32 alpha_factor = 1.f;
     LLColor4 text_color = mColor;
@@ -761,7 +758,8 @@ void LLHUDNameTag::updateAll()
         }
         textp->updateSize();
         // find on-screen position and initialize collision rectangle
-        textp->mTargetPositionOffset = textp->updateScreenPos(LLVector2::zero);
+        LLVector2 zero_offset; // SKOOMA-PORT: LLVector2::zero is const now; updateScreenPos takes a non-const ref
+        textp->mTargetPositionOffset = textp->updateScreenPos(zero_offset);
         current_screen_area += (F32)(textp->mSoftScreenRect.getWidth() * textp->mSoftScreenRect.getHeight());
     }
 

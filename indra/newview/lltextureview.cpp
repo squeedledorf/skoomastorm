@@ -252,7 +252,7 @@ void LLTextureBar::draw()
     LLFontGL::getFontMonospace()->renderUTF8(fetch_state_desc[state].desc, 0, title_x2, getRect().getHeight(),
                                      fetch_state_desc[state].color,
                                      LLFontGL::LEFT, LLFontGL::TOP);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     // Draw the progress bar.
     S32 bar_width = 110;
@@ -611,7 +611,7 @@ void LLGLTexMemBar::draw()
     S32 right = left + bar_width;
     F32 bar_scale;
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     // VRAM Mem Bar
     text = "VRAM";
@@ -942,8 +942,8 @@ void LLTextureView::draw()
             LL_INFOS() << "ID\tMEM\tBOOST\tPRI\tWIDTH\tHEIGHT\tDISCARD" << LL_ENDL;
         }
 
-        for (LLViewerTextureList::image_list_t::iterator iter = gTextureList.mImageList.begin();
-             iter != gTextureList.mImageList.end(); )
+        for (LLViewerTextureList::image_table_t::const_iterator iter = gTextureList.begin();
+             iter != gTextureList.end(); )
         {
             LLViewerFetchedTexture* imagep = *iter++;
             if(!imagep->hasFetcher())

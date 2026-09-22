@@ -360,7 +360,7 @@ void SSLightningRender::renderFlash()
         gSSLightningProgram.uniform3f(s_squash, vol->squashKnee(), vol->squashCap(), vol->virtualRadius());
         gSSLightningProgram.uniform3fv(s_cam, 1, cam.mV);
     }
-    gSSLightningProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, LLViewerFetchedTexture::sWhiteImagep);
+    gSSLightningProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, LLViewerFetchedTexture::sWhiteImagep, ALSamplers::AnisoWrap);
 
     LLGLDisable cull(GL_CULL_FACE);
     LLGLEnable blend(GL_BLEND);
@@ -637,17 +637,17 @@ void SSLightningRender::render()
     const bool textured = mTextureRef.notNull() && mTextureRef->hasGLTexture();
     if (textured)
     {
-        gSSLightningProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, mTextureRef);
+        gSSLightningProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, mTextureRef, ALSamplers::AnisoWrap);
         mTextureRef->addTextureStats(512.f * 512.f);
     }
     else
     {
-        gSSLightningProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, LLViewerFetchedTexture::sWhiteImagep);
+        gSSLightningProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, LLViewerFetchedTexture::sWhiteImagep, ALSamplers::AnisoWrap);
     }
     gSSLightningProgram.uniform1f(s_use_tex, textured ? 1.f : 0.f);
 
     bool soft_on = false;
-    if (depth_copy && gSSLightningProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, depth_copy, true) >= 0)
+    if (depth_copy && gSSLightningProgram.bindDepthTexture(LLShaderMgr::DEFERRED_DEPTH, depth_copy, ALSamplers::BilinearClamp) >= 0)
     {
         soft_on = true;
         gSSLightningProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)gGLViewport[2], (F32)gGLViewport[3]);

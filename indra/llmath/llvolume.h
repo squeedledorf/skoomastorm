@@ -159,9 +159,7 @@ constexpr U8    LL_PCODE_PATH_IGNORE    = 0x00;
 constexpr U8    LL_PCODE_PATH_MIN       = 0x01;     // min/max needs to be >> 4 of real min/max
 constexpr U8    LL_PCODE_PATH_LINE      = 0x10;
 constexpr U8    LL_PCODE_PATH_CIRCLE    = 0x20;
-//<-- Working33 by Gregory Maurer
 constexpr U8    LL_PCODE_PATH_CIRCLE_33 = 0x21;
-//Working33 -->
 constexpr U8    LL_PCODE_PATH_CIRCLE2   = 0x30;
 constexpr U8    LL_PCODE_PATH_TEST      = 0x40;
 constexpr U8    LL_PCODE_PATH_FLEXIBLE  = 0x80;
@@ -832,29 +830,18 @@ public:
 class LLVolumeFace
 {
 public:
+    // A vertex as the importers and the optimizer pass it around: position,
+    // normal and texture coordinate in one block, so a vector of them is one
+    // allocation.
     class VertexData
     {
-        enum
-        {
-            POSITION = 0,
-            NORMAL = 1
-        };
-
-    private:
-        void init();
     public:
-        VertexData();
-        VertexData(const VertexData& rhs);
-        const VertexData& operator=(const VertexData& rhs);
-
-        ~VertexData();
-        LLVector4a& getPosition();
-        LLVector4a& getNormal();
-        const LLVector4a& getPosition() const;
-        const LLVector4a& getNormal() const;
-        void setPosition(const LLVector4a& pos);
-        void setNormal(const LLVector4a& norm);
-
+        LLVector4a& getPosition() { return mPosition; }
+        LLVector4a& getNormal() { return mNormal; }
+        const LLVector4a& getPosition() const { return mPosition; }
+        const LLVector4a& getNormal() const { return mNormal; }
+        void setPosition(const LLVector4a& pos) { mPosition = pos; }
+        void setNormal(const LLVector4a& norm) { mNormal = norm; }
 
         LLVector2 mTexCoord;
 
@@ -863,7 +850,8 @@ public:
         bool compareNormal(const VertexData& rhs, F32 angle_cutoff) const;
 
     private:
-        LLVector4a* mData;
+        LLVector4a mPosition;
+        LLVector4a mNormal;
     };
 
     LLVolumeFace();

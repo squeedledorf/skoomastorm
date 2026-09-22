@@ -36,6 +36,8 @@
  */
 
 typedef FILE    LLFILE;
+// SKOOMA-PORT: Alchemy spells fopen modes through LLFILE_MODE; ours takes plain char modes.
+#define LLFILE_MODE(mode) mode
 
 #include <fstream>
 #include <sys/stat.h>

@@ -62,11 +62,12 @@
 #include "llwindowshade.h"
 #include "llfloatertools.h"  // to enable hide if build tools are up
 #include "llvector4a.h"
+#include "ssglmcompat.h"
 
 #include <glm/gtx/transform2.hpp>
 
 // Functions pulled from llviewerdisplay.cpp
-bool get_hud_matrices(glm::mat4 &proj, glm::mat4 &model);
+bool get_hud_matrices(LLMatrix4a& proj, LLMatrix4a& model); // SKOOMA-PORT: Alchemy signature
 
 // Warning: make sure these two match!
 const LLPanelPrimMediaControls::EZoomLevel LLPanelPrimMediaControls::kZoomLevels[] = { ZOOM_NONE, ZOOM_MEDIUM };
@@ -653,9 +654,9 @@ void LLPanelPrimMediaControls::updateShape()
             mat = get_current_projection() * get_current_modelview();
         }
         else {
-            glm::mat4 proj, modelview;
+            LLMatrix4a proj, modelview;
             if (get_hud_matrices(proj, modelview))
-                mat = proj * modelview;
+                mat = ss_to_glm(proj) * ss_to_glm(modelview);
         }
         LLVector3 min = LLVector3(1,1,1);
         LLVector3 max = LLVector3(-1,-1,-1);

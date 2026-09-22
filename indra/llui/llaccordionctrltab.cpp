@@ -46,6 +46,12 @@ static const F32 AUTO_OPEN_TIME = 1.f;
 static const S32 VERTICAL_MULTIPLE = 16;
 static const S32 PARENT_BORDER_MARGIN = 5;
 
+// Optional header checkbox (Alchemy Lightbox): right-aligned in the header.
+static const S32 HEADER_CHECKBOX_RIGHT_PAD = 6;
+static const S32 HEADER_CHECKBOX_TEXT_GAP = 6;
+static const S32 HEADER_CHECKBOX_WIDTH = 24;
+static const S32 HEADER_CHECKBOX_HEIGHT = 16;
+
 static LLDefaultChildRegistry::Register<LLAccordionCtrlTab> t1("accordion_tab");
 
 class LLAccordionCtrlTab::LLAccordionCtrlTabHeader : public LLUICtrl
@@ -77,6 +83,13 @@ public:
 
     void setSelected(bool is_selected) { mIsSelected = is_selected; }
 
+    void setHeaderCheckBox(LLCheckBoxCtrl* checkbox)
+    {
+        mHeaderCheckBox = checkbox;
+        addChild(checkbox);
+        reshape(getRect().getWidth(), getRect().getHeight());
+    }
+
     virtual void onMouseEnter(S32 x, S32 y, MASK mask);
     virtual void onMouseLeave(S32 x, S32 y, MASK mask);
     virtual bool handleKey(KEY key, MASK mask, bool called_from_parent);
@@ -88,6 +101,7 @@ public:
 
 private:
     LLTextBox* mHeaderTextbox;
+    LLCheckBoxCtrl* mHeaderCheckBox = nullptr;
 
     // Overlay images (arrows)
     LLPointer<LLUIImage> mImageCollapsed;
@@ -247,10 +261,28 @@ void LLAccordionCtrlTab::LLAccordionCtrlTabHeader::draw()
 
 void LLAccordionCtrlTab::LLAccordionCtrlTabHeader::reshape(S32 width, S32 height, bool called_from_parent /* = true */)
 {
+    // The title stops short of the header checkbox, if there is one.
+    S32 text_right = width;
+    if (mHeaderCheckBox)
+    {
+        const LLRect& old_check_rect = mHeaderCheckBox->getRect();
+        LLRect check_rect;
+        check_rect.setLeftTopAndSize(width - HEADER_CHECKBOX_RIGHT_PAD - old_check_rect.getWidth(),
+                                     (height + old_check_rect.getHeight()) / 2,
+                                     old_check_rect.getWidth(),
+                                     old_check_rect.getHeight());
+        if (check_rect != old_check_rect)
+        {
+            mHeaderCheckBox->setRect(check_rect);
+            mHeaderCheckBox->updateBoundingRect();
+        }
+        text_right = llmax(check_rect.mLeft - HEADER_CHECKBOX_TEXT_GAP, HEADER_TEXT_LEFT_OFFSET);
+    }
+
     S32 header_height = mHeaderTextbox->getTextPixelHeight();
     LLRect old_header_rect = mHeaderTextbox->getRect();
 
-    LLRect textboxRect(HEADER_TEXT_LEFT_OFFSET, (height + header_height) / 2, width, (height - header_height) / 2);
+    LLRect textboxRect(HEADER_TEXT_LEFT_OFFSET, (height + header_height) / 2, text_right, (height - header_height) / 2);
     if (old_header_rect.getHeight() != textboxRect.getHeight()
         || old_header_rect.mLeft != textboxRect.mLeft
         || old_header_rect.mTop != textboxRect.mTop
@@ -351,6 +383,7 @@ LLAccordionCtrlTab::Params::Params()
     ,header_image_pressed("header_image_pressed")
     ,header_image_focused("header_image_focused")
     ,header_text_color("header_text_color")
+    ,header_check_box("header_check_box")
     ,fit_panel("fit_panel",true)
     ,selection_enabled("selection_enabled", false)
 {
@@ -373,6 +406,7 @@ LLAccordionCtrlTab::LLAccordionCtrlTab(const LLAccordionCtrlTab::Params&p)
     ,mSelectionEnabled(p.selection_enabled)
     ,mContainerPanel(NULL)
     ,mScrollbar(NULL)
+    ,mHeaderCheckBox(NULL)
 {
     mStoredOpenCloseState = false;
     mWasStateStored = false;
@@ -384,6 +418,23 @@ LLAccordionCtrlTab::LLAccordionCtrlTab(const LLAccordionCtrlTab::Params&p)
     headerParams.title(p.title);
     mHeader = LLUICtrlFactory::create<LLAccordionCtrlTabHeader>(headerParams);
     addChild(mHeader, 1);
+
+    if (p.header_check_box.isProvided())
+    {
+        LLCheckBoxCtrl::Params checkParams = p.header_check_box;
+        checkParams.follows.flags(FOLLOWS_NONE); // placed by the header's reshape
+        if (!checkParams.rect.width.isProvided())
+        {
+            checkParams.rect.width = HEADER_CHECKBOX_WIDTH;
+        }
+        if (!checkParams.rect.height.isProvided())
+        {
+            checkParams.rect.height = HEADER_CHECKBOX_HEIGHT;
+        }
+        // Built here so control_name/commit_callback resolve in the floater's scope.
+        mHeaderCheckBox = LLUICtrlFactory::create<LLCheckBoxCtrl>(checkParams);
+        mHeader->setHeaderCheckBox(mHeaderCheckBox);
+    }
 
     LLFocusableElement::setFocusReceivedCallback(boost::bind(&LLAccordionCtrlTab::selectOnFocusReceived, this));
 
@@ -524,8 +575,25 @@ void LLAccordionCtrlTab::onUpdateScrollToChild(const LLUICtrl *cntrl)
     LLUICtrl::onUpdateScrollToChild(cntrl);
 }
 
+bool LLAccordionCtrlTab::pointInHeaderCheckBox(S32 x, S32 y) const
+{
+    if (!mHeaderCheckBox || !mHeaderCheckBox->getVisible())
+    {
+        return false;
+    }
+    LLRect check_rect;
+    mHeaderCheckBox->localRectToOtherView(mHeaderCheckBox->getLocalRect(), &check_rect, this);
+    return check_rect.pointInRect(x, y);
+}
+
 bool LLAccordionCtrlTab::handleMouseDown(S32 x, S32 y, MASK mask)
 {
+    // The header band below opens/closes the tab; let a header checkbox take its own clicks.
+    if (pointInHeaderCheckBox(x, y) && LLUICtrl::handleMouseDown(x, y, mask))
+    {
+        return true;
+    }
+
     if (mCollapsible && mHeaderVisible && mCanOpenClose)
     {
         if (y >= (getRect().getHeight() - HEADER_HEIGHT))
@@ -1139,6 +1207,16 @@ void LLAccordionCtrlTab::ctrlSetLeftTopAndSize(LLView* panel, S32 left, S32 top,
 
 bool LLAccordionCtrlTab::handleToolTip(S32 x, S32 y, MASK mask)
 {
+    if (pointInHeaderCheckBox(x, y))
+    {
+        LLRect check_rect;
+        mHeaderCheckBox->localRectToOtherView(mHeaderCheckBox->getLocalRect(), &check_rect, this);
+        if (mHeaderCheckBox->handleToolTip(x - check_rect.mLeft, y - check_rect.mBottom, mask))
+        {
+            return true;
+        }
+    }
+
     //header may be not the first child but we need to process it first
     if (y >= (getRect().getHeight() - HEADER_HEIGHT - HEADER_HEIGHT / 2))
     {

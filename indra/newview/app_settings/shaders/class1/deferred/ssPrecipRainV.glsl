@@ -21,8 +21,8 @@
  * $/LicenseInfo$
  */
 
-uniform mat4 modelview_matrix;
-uniform mat4 modelview_projection_matrix;
+// <SS:Nexii> SKOOMA-PORT: engine UBO (was loose uniforms) - spliced from class1/deferred/matricesBlock.glsl
+//[ENGINE_BLOCK Matrices]
 
 in vec3 position;
 in vec3 normal;

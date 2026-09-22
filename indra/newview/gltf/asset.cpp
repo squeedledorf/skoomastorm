@@ -570,7 +570,7 @@ bool Asset::prep()
         for (S32 double_sided = 0; double_sided < 2; ++double_sided)
         {
             RenderData& rd = mRenderData[double_sided];
-            for (U32 i = 0; i < LLGLSLShader::NUM_GLTF_VARIANTS; ++i)
+            for (U32 i = 0; i < LL::GLTF::NUM_GLTF_VARIANTS; ++i)
             {
                 rd.mBatches[i].resize(mat_count);
             }
@@ -579,8 +579,8 @@ bool Asset::prep()
             for (S32 mat_id = -1; mat_id < (S32)mMaterials.size(); ++mat_id)
             {
                 // for each shader variant
-                U32 vertex_count[LLGLSLShader::NUM_GLTF_VARIANTS] = { 0 };
-                U32 index_count[LLGLSLShader::NUM_GLTF_VARIANTS] = { 0 };
+                U32 vertex_count[LL::GLTF::NUM_GLTF_VARIANTS] = { 0 };
+                U32 index_count[LL::GLTF::NUM_GLTF_VARIANTS] = { 0 };
 
                 S32 ds_mat = mat_id == -1 ? 0 : mMaterials[mat_id].mDoubleSided;
                 if (ds_mat != double_sided)
@@ -588,7 +588,7 @@ bool Asset::prep()
                     continue;
                 }
 
-                for (U32 variant = 0; variant < LLGLSLShader::NUM_GLTF_VARIANTS; ++variant)
+                for (U32 variant = 0; variant < LL::GLTF::NUM_GLTF_VARIANTS; ++variant)
                 {
 #ifdef SHOW_ASSERT
                     U32 attribute_mask = 0;

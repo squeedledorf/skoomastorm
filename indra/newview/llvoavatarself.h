@@ -102,7 +102,8 @@ public:
     /*virtual*/ bool setVisualParamWeight(const char* param_name, F32 weight, bool upload_bake = false);
     /*virtual*/ bool setVisualParamWeight(S32 index, F32 weight, bool upload_bake = false);
     // </FS:Ansariel> [Legacy Bake]
-    /*virtual*/ void updateVisualParams();
+    /*virtual*/ bool setVisualParamWeight(S32 index, S32 type, F32 weight); // Alchemy: used by LLWearable::writeToAvatar
+    /*virtual*/ bool updateVisualParams();
     void writeWearablesToAvatar();
     /*virtual*/ void idleUpdateAppearanceAnimation();
 

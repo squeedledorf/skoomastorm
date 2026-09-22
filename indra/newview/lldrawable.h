@@ -42,7 +42,7 @@
 #include "llrect.h"
 #include "llappviewer.h" // for gFrameTimeSeconds
 #include "llvieweroctree.h"
-#include <unordered_set>
+#include <boost/unordered_set.hpp>
 
 class LLCamera;
 class LLDrawPool;
@@ -59,11 +59,9 @@ class LLViewerTexture;
 const U32 SILHOUETTE_HIGHLIGHT = 0;
 
 // All data for new renderer goes into this class.
-LL_ALIGN_PREFIX(16)
-class LLDrawable
+class alignas(16) LLDrawable
     : public LLViewerOctreeEntryData
 {
-    LL_ALIGN_NEW;
 public:
     typedef std::vector<LLFace*> face_list_t;
 
@@ -90,8 +88,8 @@ public:
     const LLViewerObject *getVObj() const                         { return mVObjp; }
     LLVOVolume* getVOVolume() const; // cast mVObjp tp LLVOVolume if OK
 
-    const LLMatrix4&      getWorldMatrix() const        { return mXform.getWorldMatrix(); }
-    const LLMatrix4&      getRenderMatrix() const;
+    const LLMatrix4a&     getWorldMatrix() const        { return mXform.getWorldMatrix(); }
+    const LLMatrix4a&     getRenderMatrix() const;
     void                  setPosition(LLVector3 v) const { }
     const LLVector3&      getPosition() const           { return mXform.getPosition(); }
     const LLVector3&      getWorldPosition() const      { return mXform.getPositionW(); }
@@ -215,7 +213,7 @@ public:
     friend class LLDrawPool;
     friend class LLSpatialBridge;
 
-    typedef std::unordered_set<LLPointer<LLDrawable> > drawable_set_t;
+    typedef boost::unordered_set<LLPointer<LLDrawable> > drawable_set_t;
     typedef std::set<LLPointer<LLDrawable> > ordered_drawable_set_t;
     typedef std::vector<LLPointer<LLDrawable> > drawable_vector_t;
     typedef std::list<LLPointer<LLDrawable> > drawable_list_t;
@@ -304,7 +302,7 @@ private:
 
     static U32 sNumZombieDrawables;
     static std::vector<LLPointer<LLDrawable> > sDeadList;
-} LL_ALIGN_POSTFIX(16);
+};
 
 
 inline LLFace* LLDrawable::getFace(const S32 i) const

@@ -87,7 +87,6 @@ void LLReflectionMap::autoAdjustOrigin()
 
         if (part && part->mPartitionType == LLViewerRegion::PARTITION_VOLUME)
         {
-            mPriority = 0;
             // cast a ray towards 8 corners of bounding box
             // nudge origin towards center of empty space
 
@@ -175,7 +174,6 @@ void LLReflectionMap::autoAdjustOrigin()
     }
     else if (mViewerObject && !mViewerObject->isDead())
     {
-        mPriority = 1;
         mOrigin.load3(mViewerObject->getPositionAgent().mV);
 
         if (mViewerObject->getVolume() && ((LLVOVolume*)mViewerObject.get())->getReflectionProbeIsBox())
@@ -188,6 +186,99 @@ void LLReflectionMap::autoAdjustOrigin()
             mRadius = mViewerObject->getScale().mV[0] * 0.5f;
         }
     }
+}
+
+void LLReflectionMap::syncToViewerObject()
+{
+    if (!mViewerObject || mViewerObject->isDead())
+    {
+        return;
+    }
+
+    mOrigin.load3(mViewerObject->getPositionAgent().mV);
+
+    if (!mViewerObject->getVolumeConst())
+    {
+        return;
+    }
+
+    if (((LLVOVolume*)mViewerObject.get())->getReflectionProbeIsBox())
+    {
+        LLVector3 s = mViewerObject->getScale().scaledVec(LLVector3(0.5f, 0.5f, 0.5f));
+        mRadius = s.magVec();
+    }
+    else
+    {
+        mRadius = mViewerObject->getScale().mV[0] * 0.5f;
+    }
+}
+
+bool LLReflectionMap::eclipses(const LLReflectionMap* other, F32 margin) const
+{
+    if (!other || other == this || !mViewerObject || mViewerObject->isDead())
+    {
+        return false;
+    }
+
+    LLVector4a delta;
+    delta.setSub(other->mOrigin, mOrigin);
+
+    bool is_box = mViewerObject->getVolumeConst()
+               && ((LLVOVolume*)mViewerObject.get())->getReflectionProbeIsBox();
+
+    if (is_box)
+    {
+        // A box probe's own influence volume is what the shader tests against, and inside it
+        // the shader refuses to sample automatic probes at all. So containment in the box is
+        // the whole condition -- anything inside contributes exactly nothing.
+        //
+        // Measured in the probe object's frame, where the volume is an axis-aligned box of its
+        // half-scale, so the other probe's bounding sphere has to clear all three axes.
+        LLVector3 half = mViewerObject->getScale() * 0.5f;
+        LLVector3 local(delta.getF32ptr());
+        local.rotVec(~mViewerObject->getRenderRotation());
+
+        return fabsf(local.mV[0]) + other->mRadius <= half.mV[0] + margin
+            && fabsf(local.mV[1]) + other->mRadius <= half.mV[1] + margin
+            && fabsf(local.mV[2]) + other->mRadius <= half.mV[2] + margin;
+    }
+
+    // A sphere probe does not exclude automatics -- it blends against them, weighted by
+    // sphereWeight's dw. That weight saturates the blend to fully manual everywhere inside
+    // half the radius, which is where its attenuation ramp begins (r1 = r * 0.5 in
+    // class3/deferred/reflectionProbeF.glsl; the two have to agree or this culls a probe that
+    // was still contributing). Containment in that inner half is therefore the condition under
+    // which dropping the automatic provably cannot change a pixel; plain containment is not.
+    const F32 SPHERE_FULL_WEIGHT_FRACTION = 0.5f;
+
+    F32 dist = delta.getLength3().getF32();
+
+    return dist + other->mRadius <= mRadius * SPHERE_FULL_WEIGHT_FRACTION + margin;
+}
+
+bool LLReflectionMap::neighborsAreStale() const
+{
+    if (mNeighborRadius < 0.f)
+    { // never built
+        return true;
+    }
+
+    // A tenth of the radius. Drift smaller than that cannot change which probes matter by more
+    // than the sphere weight's own falloff already blends over, and the threshold is measured
+    // against the volume the list was built at rather than against the previous frame, so slow
+    // movement still accumulates until it crosses.
+    const F32 DRIFT_FRACTION = 0.1f;
+    F32 slack = llmax(mRadius * DRIFT_FRACTION, 0.1f);
+
+    if (fabsf(mRadius - mNeighborRadius) > slack)
+    {
+        return true;
+    }
+
+    LLVector4a delta;
+    delta.setSub(mOrigin, mNeighborOrigin);
+
+    return delta.getLength3().getF32() > slack;
 }
 
 bool LLReflectionMap::intersects(LLReflectionMap* other) const
@@ -260,22 +351,20 @@ bool LLReflectionMap::getBox(LLMatrix4& box)
         LLVolume* volume = mViewerObject->getVolume();
         if (volume && mViewerObject->getReflectionProbeIsBox())
         {
-            glm::mat4 mv(get_current_modelview());
             LLVector3 s = mViewerObject->getScale().scaledVec(LLVector3(0.5f, 0.5f, 0.5f));
             mRadius = s.magVec();
-            glm::mat4 scale = glm::scale(glm::vec3(s));
             if (mViewerObject->mDrawable != nullptr)
             {
-                // object to agent space (no scale)
-                glm::mat4 rm(glm::make_mat4((F32*)mViewerObject->mDrawable->getWorldMatrix().mMatrix));
-
-                // construct object to camera space (with scale)
-                mv = mv * rm * scale;
+                // object unit cube to camera space: the scale, then the object's
+                // world matrix, then the view
+                LLMatrix4a mv;
+                mv.setMul(LLMatrix4a::scaling(s.mV[0], s.mV[1], s.mV[2]), mViewerObject->mDrawable->getWorldMatrix());
+                mv.setMul(mv, LLViewerCamera::getCurrent().getModelview());
 
                 // inverse is camera space to object unit cube
-                mv = glm::inverse(mv);
+                mv.invert();
 
-                box = LLMatrix4(glm::value_ptr(mv));
+                mv.store(box);
 
                 return true;
             }
@@ -330,9 +419,14 @@ bool LLReflectionMap::isRelevant() const
         return is_manual;
     case (S32)ProbeLevel::MANUAL_AND_TERRAIN:
         // manual probes and terrain/water probes are relevant
-        return !is_automatic;
+        // (Alchemy: a non-manual probe inside a manual probe is eclipsed, see eclipses())
+        return is_manual || (!is_automatic && !mInsideManualProbe);
     case (S32)ProbeLevel::FULL_SCENE_WITH_AUTO:
-        // all probes are relevant
+        // all probes are relevant, except non-manual ones a manual probe already covers (Alchemy, see eclipses())
+        if (!is_manual && mInsideManualProbe)
+        {
+            return false;
+        }
         return true;
     default:
         LL_WARNS() << "Unknown RenderReflectionProbeLevel: " << (S32)sRenderReflectionProbeLevel()
@@ -386,11 +480,6 @@ void LLReflectionMap::doOcclusion(const LLVector4a& eye)
             do_query = true;
             glGetQueryObjectuiv(mOcclusionQuery, GL_QUERY_RESULT, &result);
             mOccluded = result == 0;
-            mOcclusionPendingFrames = 0;
-        }
-        else
-        {
-            mOcclusionPendingFrames++;
         }
     }
 

@@ -28,20 +28,20 @@ uniform vec3  sunlight_color;
 uniform vec3  moonlight_color;
 uniform int   sun_up_factor;
 uniform vec3  ambient_color;
-uniform vec3  blue_horizon;
-uniform vec3  blue_density;
-uniform float haze_horizon;
-uniform float haze_density;
-uniform float cloud_shadow;
+// Shared per-frame sky/water constants, spliced from class1/deferred/environmentBlock.glsl
+// and bound at UB_ENVIRONMENT. Members are read by bare name.
+//[ENGINE_BLOCK Environment]
 uniform float density_multiplier;
-uniform float distance_multiplier;
-uniform float max_y;
-uniform vec3  glow;
-uniform float scene_light_strength;
 uniform float sun_moon_glow_factor;
-uniform float sky_sunlight_scale;
-uniform float sky_ambient_scale;
-uniform int classic_mode;
+// Classic (legacy pre-PBR) sky lighting is a per-program compile-time variant, not a runtime
+// uniform: the two paths differ by whole blocks of maths and a probe sample, and only one of
+// them is ever live for a given sky. A macro rather than a const global -- these sources are
+// separately compiled units linked into one program, and several of them declare this.
+#ifdef CLASSIC_MODE
+#define classic_mode 1
+#else
+#define classic_mode 0
+#endif
 
 #ifdef SS_ATMO
 // <SS:Nexii> The sun's horizon-band share (SSAtmoEnvApplier::sunRiseFraction): 1 the whole time the disc's centre stands at or above the horizon, easing smoothly to 0 across the twilight band below it; 0 also means no active Atmo environment, which is exactly stock. Stock switches the sunlight and the sun glow the moment the disc's CENTRE crosses zero, which reads as the whole sunrise lighting snapping on at once; the ramps below grow it through the band instead - and because the band runs down from the horizon rather than across the disc's span, the sunset glow holds its full authored strength while the sun hangs at the horizon and eases out through the dusk after it sets.

@@ -479,7 +479,7 @@ void SSOrbitViewCtrl::computeLayout(const SSAtmoEnvPlanetary& planetary, std::ve
 // One tilted display ring.
 void SSOrbitViewCtrl::drawRing(F32 centre_x, F32 centre_y, F32 radius, F32 tilt_rad, const LLColor4& color) const
 {
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
     gGL.color4fv(color.mV);
     gGL.begin(LLRender::LINE_LOOP);
     for (S32 seg = 0; seg < ORBIT_RING_SEGMENTS; ++seg)
@@ -702,7 +702,7 @@ void SSOrbitViewCtrl::draw()
         {
             const F32 hx = handle_antipodal ? p.mCounterCentreX : p.mPairCentreX;
             const F32 hy = handle_antipodal ? p.mCounterCentreY : p.mPairCentreY;
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTextureSlot(0)->unbind();
             gGL.color4f(1.f, 1.f, 1.f, 0.9f);
             gl_circle_2d(hx, hy, ORBIT_PAIR_HANDLE_DRAW_RADIUS, 24, false);
             gl_circle_2d(hx, hy, ORBIT_PAIR_HANDLE_DOT_RADIUS, 8, true);

@@ -396,7 +396,7 @@ namespace
             S32 gltf_node_idx = found_node->second;
             JointNodeData& node = gltf_nodes[gltf_node_idx];
             node.mIsOverrideValid = true;
-            node.mViewerRestMatrix = viewer_data.mRestMatrix;
+            node.mViewerRestMatrix = glm::make_mat4(viewer_data.mRestMatrix.getF32ptr()); // SKOOMA-PORT: LLJointData is LLMatrix4a now
 
             glm::mat4 gltf_joint_rest_pose = convertTransformToViewerBasis(node.mGltfRestMatrix, apply_xy_rotation);
 
@@ -440,7 +440,7 @@ namespace
         }
         else
         {
-            rest = parent_rest * viewer_data.mJointMatrix;
+            rest = parent_rest * glm::make_mat4(viewer_data.mJointMatrix.getF32ptr());
         }
 
         glm::mat4 support_rest = parent_support_rest;
@@ -1162,7 +1162,7 @@ void FSLocalMeshImportGLTF::finalizeSkinInfo(LLLocalMeshObject* object) const
     // Local mesh vertices are normalized into object space before upload; bind shape
     // must always carry the inverse normalization back into skin space.
     LLMatrix4a transform{normalized_transformation};
-    matMul(transform, skininfop->mBindShapeMatrix, skininfop->mBindShapeMatrix);
+    skininfop->mBindShapeMatrix.setMul(transform, skininfop->mBindShapeMatrix);
 
     FSLocalMeshImportBase::buildBindPoseMatrix(skininfop);
 

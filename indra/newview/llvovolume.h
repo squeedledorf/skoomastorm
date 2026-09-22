@@ -39,6 +39,7 @@
 
 
 class LLViewerTextureAnim;
+class LLTextureAnim;
 class LLDrawPool;
 class LLMaterialID;
 class LLSelectNode;
@@ -96,7 +97,7 @@ public:
     virtual bool isVolumeUnique() const = 0; // Do we need a unique LLVolume instance?
     virtual bool isVolumeGlobal() const = 0; // Are we in global space?
     virtual bool isActive() const = 0; // Is this object currently active?
-    virtual const LLMatrix4& getWorldMatrix(LLXformMatrix* xform) const = 0;
+    virtual const LLMatrix4a& getWorldMatrix(LLXformMatrix* xform) const = 0;
     virtual void updateRelativeXform(bool force_identity = false) = 0;
     virtual U32 getID() const = 0;
     virtual void preRebuild() = 0;
@@ -143,12 +144,13 @@ public:
     /*virtual*/ bool    setParent(LLViewerObject* parent) override;
                 S32     getLOD() const override             { return mLOD; }
                 void    setNoLOD()                          { mLOD = NO_LOD; mLODChanged = true; }
+                void    setLOD(S32 lod)                     { mLOD = lod; mLODChanged = true; }
                 bool    isNoLOD() const                     { return NO_LOD == mLOD; }
     const LLVector3     getPivotPositionAgent() const override;
     const LLMatrix4&    getRelativeXform() const                { return mRelativeXform; }
     const LLMatrix3&    getRelativeXformInvTrans() const        { return mRelativeXformInvTrans; }
-    /*virtual*/ const LLMatrix4 getRenderMatrix() const override;
-                typedef std::unordered_set<const LLViewerTexture*> texture_cost_t;
+    /*virtual*/ const LLMatrix4a& getRenderMatrix() const override;
+                typedef boost::unordered_set<const LLViewerTexture*> texture_cost_t;
                 static S32 getTextureCost(const LLViewerTexture* img);
                 U32     getRenderCost(texture_cost_t &textures) const;
     /*virtual*/ F32     getEstTrianglesMax() const override;
@@ -179,10 +181,13 @@ public:
                 LLVector3 volumeDirectionToAgent(const LLVector3& dir) const;
 
 
+// [FS:Beq] - Patch: Appearance-RebuildAttachments | Checked: Catznip-5.3
+                void    forceLOD(S32 lod);
+// [/FS]
                 bool    getVolumeChanged() const                { return mVolumeChanged; }
 
     F32 getVObjRadius() const override              { return mVObjRadius; };
-                const LLMatrix4& getWorldMatrix(LLXformMatrix* xform) const override;
+                const LLMatrix4a& getWorldMatrix(LLXformMatrix* xform) const override;
 
                 void    markForUpdate() override;
                 void    faceMappingChanged() override           { mFaceMappingChanged=true; }
@@ -453,13 +458,16 @@ protected:
 private:
     bool lodOrSculptChanged(LLDrawable *drawable, bool &compiled, bool &shouldUpdateOctreeBounds);
 
+    // TextureAnim block handling for processUpdateMessage; a block without ANIM_ON
+    // is treated as no animation at all (see applyTextureAnim in llvovolume.cpp)
+    void applyTextureAnim(const LLTextureAnim &ta);
+    void clearTextureAnim();
+    void clearUntargetedTextureMatrices(S8 target_face);
+
 public:
 
     static S32 getRenderComplexityMax() {return mRenderComplexity_last;}
     static void updateRenderComplexity();
-    //<FS:Beq> FIRE-21445
-    void forceLOD(S32 lod);
-    //</FS:Beq>
     LLViewerTextureAnim *mTextureAnimp;
     U8 mTexAnimMode;
     F32 mLODDistance;

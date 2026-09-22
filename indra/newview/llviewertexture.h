@@ -34,7 +34,6 @@
 #include "llhost.h"
 #include "llgltypes.h"
 #include "llrender.h"
-#include "llmetricperformancetester.h"
 #include "httpcommon.h"
 #include "workqueue.h"
 #include "gltf/common.h"
@@ -52,8 +51,6 @@ class LLViewerObject;
 class LLViewerTexture;
 class LLViewerFetchedTexture ;
 class LLViewerMediaTexture ;
-class LLTexturePipelineTester ;
-
 
 typedef void    (*loaded_callback_func)( bool success, LLViewerFetchedTexture *src_vi, LLImageRaw* src, LLImageRaw* src_aux, S32 discard_level, bool final, void* userdata );
 
@@ -175,16 +172,6 @@ public:
     bool hasParcelMedia() const { return mParcelMedia != NULL;}
     LLViewerMediaTexture* getParcelMedia() const { return mParcelMedia;}
 
-    /*virtual*/ void updateBindStatsForTester() ;
-
-    struct MaterialEntry
-    {
-        S32 mIndex = LL::GLTF::INVALID_INDEX;
-        std::shared_ptr<LL::GLTF::Asset> mAsset;
-    };
-    typedef std::vector<MaterialEntry> material_list_t;
-    material_list_t   mMaterialList;  // reverse pointer pointing to LL::GLTF::Materials using this image as texture
-
 protected:
     void cleanup() ;
     void init(bool firstinit) ;
@@ -209,6 +196,9 @@ protected:
 
     ll_face_list_t    mFaceList[LLRender::NUM_TEXTURE_CHANNELS]; //reverse pointer pointing to the faces using this image as texture
     U32               mNumFaces[LLRender::NUM_TEXTURE_CHANNELS];
+    U32               mFaceWalkCursor = 0; // where the update window's next visit starts in mFaceList, counted across channels
+    F32               mFaceWalkMax = 0.f;         // largest face stat seen so far in the current rotation of the walk
+    F32               mFaceWalkRotationMax = 0.f; // the same over the last completed rotation
     LLFrameTimer      mLastFaceListUpdateTimer ;
 
     ll_volume_list_t  mVolumeList[LLRender::NUM_VOLUME_TEXTURE_CHANNELS];
@@ -370,8 +360,10 @@ public:
     S32 getOriginalWidth() { return mOrigWidth; }
     S32 getOriginalHeight() { return mOrigHeight; }
 
-    bool isInImageList() const {return mInImageList ;}
-    void setInImageList(bool flag) {mInImageList = flag ;}
+    bool isInImageList() const { return mListIndex >= 0; }
+    // Position in the texture list's table, -1 when not in it. The table writes it.
+    S32  getListIndex() const { return mListIndex; }
+    void setListIndex(S32 index) { mListIndex = index; }
 
     LLFrameTimer* getLastPacketTimer() {return &mLastPacketTimer;}
 
@@ -477,6 +469,10 @@ public:
     std::map<std::string,std::string> mComment;
     // </FS:Techwolf Lupindo>
 
+    LLUUID      getUploader();
+    LLDate      getUploadTime();
+    std::string getComment();
+
 protected:
     S32 getCurrentDiscardLevelForFetching() ;
 public: // <FS:Ansariel> Needed for texture refresh
@@ -564,7 +560,7 @@ protected:
     LLFrameTimer mLastPacketTimer;      // Time since last packet.
     LLFrameTimer mStopFetchingTimer;    // Time since mDecodePriority == 0.f.
 
-    bool  mInImageList;             // true if image is in list (in which case don't reset priority!)
+    S32   mListIndex;               // position in gTextureList's table, -1 when not in it (in which case don't reset priority!)
     // This needs to be atomic, since it is written both in the main thread
     // and in the GL image worker thread... HB
     LLAtomicBool  mNeedsCreateTexture;
@@ -590,14 +586,13 @@ public:
     static LLPointer<LLViewerFetchedTexture> sFlatNormalImagep; // Flat normal map denoting no bumpiness on a surface
     static LLPointer<LLViewerFetchedTexture> sDefaultIrradiancePBRp; // PBR: irradiance
     static LLPointer<LLViewerFetchedTexture> sDefaultParticleImagep; // Default particle texture
+// [SL:KB] - Patch: Render-TextureToggle (Catznip-4.0)
+    static LLPointer<LLViewerFetchedTexture> sDefaultDiffuseImagep;
+// [/SL:KB]
 
     // not sure why, but something is iffy about the loading of this particular texture, use the accessor instead of accessing directly
     static LLPointer<LLViewerFetchedTexture> sSmokeImagep; // Old "Default" translucent texture
     static LLViewerFetchedTexture* getSmokeImage();
-
-// [SL:KB] - Patch: Render-TextureToggle (Catznip-4.0)
-    static LLPointer<LLViewerFetchedTexture> sDefaultDiffuseImagep;
-// [/SL:KB]
 };
 
 //
@@ -699,9 +694,6 @@ private:
     LLViewerTextureManager(){}
 
 public:
-    //texture pipeline tester
-    static LLTexturePipelineTester* sTesterp ;
-
     //returns NULL if tex is not a LLViewerFetchedTexture nor derived from LLViewerFetchedTexture.
     static LLViewerFetchedTexture*    staticCastToFetchedTexture(LLTexture* tex, bool report_error = false) ;
 
@@ -737,7 +729,7 @@ public:
                                      LLHost request_from_host = LLHost()
                                      );
 
-    static LLViewerFetchedTexture* getFetchedTextureFromFile(const std::string& filename,
+    static LLViewerFetchedTexture* getFetchedTextureFromFile(std::string_view filename,
                                      FTType f_type = FTT_LOCAL_FILE,
                                      bool usemipmap = true,
                                      LLViewerTexture::EBoostLevel boost_priority = LLGLTexture::BOOST_NONE,
@@ -769,99 +761,6 @@ public:
 
     static void init() ;
     static void cleanup() ;
-};
-//
-//this class is used for test/debug only
-//it tracks the activities of the texture pipeline
-//records them, and outputs them to log files
-//
-class LLTexturePipelineTester : public LLMetricPerformanceTesterWithSession
-{
-    enum
-    {
-        MIN_LARGE_IMAGE_AREA = 262144  //512 * 512
-    };
-public:
-    LLTexturePipelineTester() ;
-    ~LLTexturePipelineTester() ;
-
-    void update();
-    void updateTextureBindingStats(const LLViewerTexture* imagep) ;
-    void updateTextureLoadingStats(const LLViewerFetchedTexture* imagep, const LLImageRaw* raw_imagep, bool from_cache) ;
-    void updateGrayTextureBinding() ;
-    void setStablizingTime() ;
-
-private:
-    void reset() ;
-    void updateStablizingTime() ;
-
-    /*virtual*/ void outputTestRecord(LLSD* sd) ;
-
-private:
-    bool mPause ;
-private:
-    bool mUsingDefaultTexture;            //if set, some textures are still gray.
-
-    U32Bytes mTotalBytesUsed ;                     //total bytes of textures bound/used for the current frame.
-    U32Bytes mTotalBytesUsedForLargeImage ;        //total bytes of textures bound/used for the current frame for images larger than 256 * 256.
-    U32Bytes mLastTotalBytesUsed ;                 //total bytes of textures bound/used for the previous frame.
-    U32Bytes mLastTotalBytesUsedForLargeImage ;    //total bytes of textures bound/used for the previous frame for images larger than 256 * 256.
-
-    //
-    //data size
-    //
-    U32Bytes mTotalBytesLoaded ;               //total bytes fetched by texture pipeline
-    U32Bytes mTotalBytesLoadedFromCache ;      //total bytes fetched by texture pipeline from local cache
-    U32Bytes mTotalBytesLoadedForLargeImage ;  //total bytes fetched by texture pipeline for images larger than 256 * 256.
-    U32Bytes mTotalBytesLoadedForSculpties ;   //total bytes fetched by texture pipeline for sculpties
-
-    //
-    //time
-    //NOTE: the error tolerances of the following timers is one frame time.
-    //
-    F32 mStartFetchingTime ;
-    F32 mTotalGrayTime ;                  //total loading time when no gray textures.
-    F32 mTotalStablizingTime ;            //total stablizing time when texture memory overflows
-    F32 mStartTimeLoadingSculpties ;      //the start moment of loading sculpty images.
-    F32 mEndTimeLoadingSculpties ;        //the end moment of loading sculpty images.
-    F32 mStartStablizingTime ;
-    F32 mEndStablizingTime ;
-
-private:
-    //
-    //The following members are used for performance analyzing
-    //
-    class LLTextureTestSession : public LLTestSession
-    {
-    public:
-        LLTextureTestSession() ;
-        /*virtual*/ ~LLTextureTestSession() ;
-
-        void reset() ;
-
-        F32 mTotalGrayTime ;
-        F32 mTotalStablizingTime ;
-        F32 mStartTimeLoadingSculpties ;
-        F32 mTotalTimeLoadingSculpties ;
-
-        S32 mTotalBytesLoaded ;
-        S32 mTotalBytesLoadedFromCache ;
-        S32 mTotalBytesLoadedForLargeImage ;
-        S32 mTotalBytesLoadedForSculpties ;
-
-        typedef struct _texture_instant_preformance_t
-        {
-            S32 mAverageBytesUsedPerSecond ;
-            S32 mAverageBytesUsedForLargeImagePerSecond ;
-            F32 mAveragePercentageBytesUsedPerSecond ;
-            F32 mTime ;
-        }texture_instant_preformance_t ;
-        std::vector<texture_instant_preformance_t> mInstantPerformanceList ;
-        S32 mInstantPerformanceListCounter ;
-    };
-
-    /*virtual*/ LLMetricPerformanceTesterWithSession::LLTestSession* loadTestSession(LLSD* log) ;
-    /*virtual*/ void compareTestSessions(llofstream* os) ;
 };
 
 #endif

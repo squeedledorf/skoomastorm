@@ -532,8 +532,15 @@ bool LLWindowSDL::createContext(int x, int y, int width, int height, int bits, b
 #endif // LL_X11
 
     // clear screen to black right at the start so it doesn't look like a crash
-    glClearColor(0.0f, 0.0f, 0.0f ,1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
+    // SKOOMA-PORT: GL entry points are function pointers that LLGLManager::initGL() resolves later,
+    // so this early clear resolves its own two.
+    auto sdlClearColor = (PFNGLCLEARCOLORPROC)SDL_GL_GetProcAddress("glClearColor");
+    auto sdlClear = (PFNGLCLEARPROC)SDL_GL_GetProcAddress("glClear");
+    if (sdlClearColor && sdlClear)
+    {
+        sdlClearColor(0.0f, 0.0f, 0.0f ,1.0f);
+        sdlClear(GL_COLOR_BUFFER_BIT);
+    }
     SDL_GL_SwapWindow(mWindow);
 
     // start text input immediately when IME is not enabled
@@ -543,7 +550,10 @@ bool LLWindowSDL::createContext(int x, int y, int width, int height, int bits, b
     }
 
     //make sure multisampling is disabled by default
-    glDisable(GL_MULTISAMPLE_ARB);
+    if (auto sdlDisable = (PFNGLDISABLEPROC)SDL_GL_GetProcAddress("glDisable"))
+    {
+        sdlDisable(GL_MULTISAMPLE);
+    }
 
     // Don't need to get the current gamma, since there's a call that restores it to the system defaults.
     return true;

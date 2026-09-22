@@ -507,7 +507,7 @@ void SSSoundListRows::draw()
     if (marker >= 0 && !mDragOut)
     {
         const S32 y = r.mTop + mScroll - marker * (ROW_H + ROW_PAD) + ROW_PAD / 2;
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
         gGL.color4f(0.4f, 0.75f, 1.f, 0.95f);
         gGL.begin(LLRender::LINES);
         gGL.vertex2i(r.mLeft + 2, y);

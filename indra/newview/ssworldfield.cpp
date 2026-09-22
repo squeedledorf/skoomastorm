@@ -2248,7 +2248,7 @@ void SSWorldField::renderDebug()
     LLGLEnable blend(GL_BLEND);
     LLGLDepthTest depth(GL_TRUE, GL_FALSE);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     auto mark = [&](const LLVector3& p, const LLColor4& c, F32 size)
     {

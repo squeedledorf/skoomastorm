@@ -10,6 +10,10 @@ include(LLImage)
 include(LLWindow)
 
 set(llrender_SOURCE_FILES
+    alsamplerstate.cpp
+    altexture3d.cpp
+    altextureslot.cpp
+    aluniformbuffer.cpp
     llcubemap.cpp
     llcubemaparray.cpp
     llfontbitmapcache.cpp
@@ -22,7 +26,6 @@ set(llrender_SOURCE_FILES
     llglslshader.cpp
     llgltexture.cpp
     llimagegl.cpp
-    llpostprocess.cpp
     llrender.cpp
     llrender2dutils.cpp
     llrendernavprim.cpp
@@ -39,6 +42,11 @@ set(llrender_SOURCE_FILES
 set(llrender_HEADER_FILES
     CMakeLists.txt
 
+    alsamplerstate.h
+    altexture3d.h
+    altextureslot.h
+    aluniformbuffer.h
+    glcorearb/GL/glcorearb.h
     llcubemap.h
     llcubemaparray.h
     llfontgl.h
@@ -54,11 +62,11 @@ set(llrender_HEADER_FILES
     llgltexture.h
     llgltypes.h
     llimagegl.h
-    llpostprocess.h
     llrender.h
     llrender2dutils.h
     llrendernavprim.h
     llrendersphere.h
+    llrendertarget.h
     llshadermgr.h
     lltexture.h
     lltexturemanagerbridge.h
@@ -105,7 +113,14 @@ target_link_libraries(llrender
         llxml
         llwindow
         ll::freetype
-        OpenGL::GL
-        OpenGL::GLU
         )
+
+# SKOOMA-PORT: GL entry points are function pointers resolved at runtime (Alchemy's loader,
+# llglheaders.h LL_GL_FUNC_POINTER), so Linux does not link libGL; SDL loads the driver.
+# Windows keeps opengl32 for wglGetProcAddress and the GL 1.1 fallbacks.
+if (WINDOWS)
+  target_link_libraries(llrender OpenGL::GL)
+endif ()
+# Khronos GL/glcorearb.h, vendored: the glext package ships glext.h but not the core header.
+target_include_directories(llrender PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/glcorearb)
 

@@ -210,6 +210,7 @@ set(llcommon_HEADER_FILES
     llregistry.h
     llrun.h
     llsafehandle.h
+    alsimd.h
     llsd.h
     llsdjson.h
     llsdparam.h

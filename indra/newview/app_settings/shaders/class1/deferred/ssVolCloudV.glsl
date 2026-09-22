@@ -23,7 +23,8 @@
 
 // <SS:Nexii> Atmo Magic volumetric cloud field
 
-uniform mat4 modelview_projection_matrix;
+// <SS:Nexii> SKOOMA-PORT: engine UBO (was loose uniforms) - spliced from class1/deferred/matricesBlock.glsl
+//[ENGINE_BLOCK Matrices]
 
 // The far-field squash: x knee, y cap (just inside the far plane), z virtual field radius. Beyond the knee, vertices pull radially toward the camera - each keeps its exact ray, so the
 // projected image is identical to the true positions and only the depth compresses - what lets the field read out to 10km through a 2km far plane. vary_world stays the TRUE position: the
@@ -103,18 +104,12 @@ uniform vec3  sunlight_color;
 uniform vec3  moonlight_color;
 uniform int   sun_up_factor;
 uniform vec3  ambient_color;
-uniform vec3  blue_horizon;
-uniform vec3  blue_density;
-uniform float haze_horizon;
-uniform float haze_density;
-uniform float cloud_shadow;
+// <SS:Nexii> SKOOMA-PORT: engine UBO (was loose uniforms) - spliced from class1/deferred/environmentBlock.glsl
+//[ENGINE_BLOCK Environment]
 uniform float density_multiplier;
-uniform float max_y;
-uniform vec3  glow;
 uniform float sun_moon_glow_factor;
+// (cloud_color - the sky's AUTHORED cloud colour the dome band paints with - now arrives through the Environment block above.)
 
-// The sky's AUTHORED cloud colour - the material the dome band paints its clouds with, worn here the same way for the same reason.
-uniform vec4 cloud_color;
 
 // <SS:Nexii> The sun's horizon-band share, true direction and disc radius (SSAtmoEnvApplier - see the long notes in skyV.glsl): the same three that keep the dome's sunset alive through the
 // whole band, dusk included, instead of snapping at centre-set. ss_sun_dir arrives in WORLD axes and is swizzled at the point of use, exactly as cloudsV does it.

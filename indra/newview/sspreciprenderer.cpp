@@ -38,6 +38,7 @@
 #include "llviewertexture.h"
 #include "llvovolume.h"
 #include "pipeline.h"
+#include "ssglmcompat.h"
 
 extern bool gCubeSnapshot;
 
@@ -242,7 +243,7 @@ void SSPrecipRenderer::drawMaterial(SSPrecipSim* sim, S32 material)
         LLGLSLShader* cur = LLGLSLShader::sCurBoundShaderPtr;
         S32 tex_channel = cur ? cur->getTextureChannel(LLShaderMgr::DIFFUSE_MAP) : 0;
         if (tex_channel < 0) tex_channel = 0;
-        gGL.getTexUnit(tex_channel)->bind(texturep);
+        gGL.getTextureSlot(tex_channel)->bindSampled(texturep, ALSamplers::AnisoWrap);
 
         mVB->setBuffer();
         mVB->drawRange(LLRender::TRIANGLES,
@@ -730,7 +731,7 @@ void SSPrecipRenderer::render()
             LLGLDepthTest depth(GL_TRUE, GL_FALSE);
 
             gGL.setColorMask(true, false);
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTextureSlot(0)->unbind();
             gGL.begin(LLRender::TRIANGLES);
 
             auto mark_ribbon = [&](const LLVector3& a, const LLVector3& b, F32 w)

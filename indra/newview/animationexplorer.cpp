@@ -259,7 +259,7 @@ void AnimationExplorer::draw()
         mAnimationPreview->requestUpdate();
 
         gGL.color3f(1.0f, 1.0f, 1.0f);
-        gGL.getTexUnit(0)->bind(mAnimationPreview);
+        gGL.getTextureSlot(0)->bindSampled(mAnimationPreview, ALSamplers::AnisoWrap);
         gGL.begin(LLRender::TRIANGLES);
         {
             gGL.texCoord2f(0.0f, 1.0f);
@@ -277,7 +277,7 @@ void AnimationExplorer::draw()
             gGL.vertex2i(r.mRight, r.mTop);
         }
         gGL.end();
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
     }
 
     // update tiems and "Still playing" status in the list once every few seconds

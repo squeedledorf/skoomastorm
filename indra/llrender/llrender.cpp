@@ -28,6 +28,7 @@
 
 #include "llrender.h"
 
+#include "alsamplerstate.h"
 #include "llvertexbuffer.h"
 #include "llcubemap.h"
 #include "llglslshader.h"
@@ -36,9 +37,13 @@
 #include "lltexture.h"
 #include "llshadermgr.h"
 #include "hbxxh.h"
-#include "glm/gtc/type_ptr.hpp"
+#include "alprojection.h"
 
-#if LL_WINDOWS
+#if GL_ARB_debug_output
+#ifndef APIENTRY
+#define APIENTRY
+#endif
+
 extern void APIENTRY gl_debug_callback(GLenum source,
                                 GLenum type,
                                 GLuint id,
@@ -51,52 +56,59 @@ extern void APIENTRY gl_debug_callback(GLenum source,
 
 thread_local LLRender gGL;
 
-// Handy copies of last good GL matrices
-F32 gGLModelView[16];
-F32 gGLLastModelView[16];
-F32 gGLLastProjection[16];
-F32 gGLProjection[16];
+#if !LL_RELEASE_FOR_DOWNLOAD
+namespace
+{
+    // Register the "Lights" block's expected std140 layout for the debug-build validator
+    // (LLGLSLShader::registerEngineBlockLayout), derived from offsetof() on the very struct
+    // packLightsUBO() writes -- so the check can never drift from the pack. Array members
+    // introspect under their "[0]" element name, hence the explicit mName overrides; the
+    // scalar-name member resolves from the reserved-uniform table.
+    const bool s_lights_layout_registered = []
+    {
+        using D = LLRender::LightsUBOData;
+        std::vector<LLGLSLShader::EngineBlockLayoutMember> members =
+        {
+            { -1, "light_position[0]",             (U32)offsetof(D, light_position),             false },
+            { -1, "light_direction[0]",            (U32)offsetof(D, light_direction),            false },
+            { -1, "light_attenuation[0]",          (U32)offsetof(D, light_attenuation),          false },
+            { -1, "light_deferred_attenuation[0]", (U32)offsetof(D, light_deferred_attenuation), false },
+            { -1, "light_diffuse[0]",              (U32)offsetof(D, light_diffuse),              false },
+            { LLShaderMgr::LIGHT_AMBIENT, nullptr, (U32)offsetof(D, light_ambient),              false },
+        };
+        LLGLSLShader::registerEngineBlockLayout("Lights", std::move(members));
 
-// transform from last frame's camera space to this frame's camera space (and inverse)
-glm::mat4 gGLDeltaModelView;
-glm::mat4 gGLInverseDeltaModelView;
+        using M = LLRender::MatricesUBOData;
+        LLGLSLShader::registerEngineBlockLayout("Matrices",
+        {
+            { LLShaderMgr::MODELVIEW_MATRIX,            nullptr, (U32)offsetof(M, modelview),            true },
+            { LLShaderMgr::PROJECTION_MATRIX,           nullptr, (U32)offsetof(M, projection),           true },
+            { LLShaderMgr::MODELVIEW_PROJECTION_MATRIX, nullptr, (U32)offsetof(M, modelview_projection), true },
+            { LLShaderMgr::INVERSE_PROJECTION_MATRIX,   nullptr, (U32)offsetof(M, inv_proj),             true },
+            { LLShaderMgr::TEXTURE_MATRIX0,             nullptr, (U32)offsetof(M, texture0),             true },
+            { LLShaderMgr::NORMAL_MATRIX,               nullptr, (U32)offsetof(M, normal),               true },
+        });
+        return true;
+    }();
+}
+#endif // !LL_RELEASE_FOR_DOWNLOAD
 
 S32 gGLViewport[4];
 
 
 U32 LLRender::sUICalls = 0;
 U32 LLRender::sUIVerts = 0;
-U32 LLTexUnit::sWhiteTexture = 0;
+U32 ALTextureSlot::sWhiteTexture = 0;
+F32 LLRender::sAnisotropicFilteringLevel = 0.f;
 bool LLRender::sGLCoreProfile = false;
 bool LLRender::sNsightDebugSupport = false;
 LLVector2 LLRender::sUIGLScaleFactor = LLVector2(1.f, 1.f);
 bool LLRender::sClassicMode = false;
+bool LLRender::sMirrorPass = false;
+bool LLRender::sReverseZ = false;
+bool LLRender::sGBufferNormHDR = true;
+bool LLRender::s10bitBackBuffer = false;
 
-struct LLVBCache
-{
-    LLPointer<LLVertexBuffer> vb;
-    std::chrono::steady_clock::time_point touched;
-};
-
-static std::unordered_map<U64, LLVBCache> sVBCache;
-static thread_local std::list<LLVertexBufferData> *sBufferDataList = nullptr;
-
-static const GLenum sGLTextureType[] =
-{
-    GL_TEXTURE_2D,
-    GL_TEXTURE_RECTANGLE,
-    GL_TEXTURE_CUBE_MAP,
-    GL_TEXTURE_CUBE_MAP_ARRAY,
-    GL_TEXTURE_2D_MULTISAMPLE,
-    GL_TEXTURE_3D
-};
-
-static const GLint sGLAddressMode[] =
-{
-    GL_REPEAT,
-    GL_MIRRORED_REPEAT,
-    GL_CLAMP_TO_EDGE
-};
 
 const U32 immediate_mask = LLVertexBuffer::MAP_VERTEX | LLVertexBuffer::MAP_COLOR | LLVertexBuffer::MAP_TEXCOORD0;
 
@@ -116,521 +128,6 @@ static const GLenum sGLBlendFactor[] =
     GL_ZERO // 'BF_UNDEF'
 };
 
-LLTexUnit::LLTexUnit(S32 index)
-    : mCurrTexType(TT_NONE),
-    mCurrTexture(0),
-    mHasMipMaps(false),
-    mIndex(index)
-{
-    llassert_always(index < (S32)LL_NUM_TEXTURE_LAYERS);
-}
-
-//static
-U32 LLTexUnit::getInternalType(eTextureType type)
-{
-    return sGLTextureType[type];
-}
-
-void LLTexUnit::refreshState(void)
-{
-    // We set dirty to true so that the tex unit knows to ignore caching
-    // and we reset the cached tex unit state
-
-    gGL.flush();
-
-    glActiveTexture(GL_TEXTURE0 + mIndex);
-
-    if (mCurrTexType != TT_NONE)
-    {
-        glBindTexture(sGLTextureType[mCurrTexType], mCurrTexture);
-    }
-    else
-    {
-        glBindTexture(GL_TEXTURE_2D, 0);
-    }
-}
-
-void LLTexUnit::activate(void)
-{
-    if (mIndex < 0) return;
-
-    if ((S32)gGL.mCurrTextureUnitIndex != mIndex || gGL.mDirty)
-    {
-        gGL.flush();
-        glActiveTexture(GL_TEXTURE0 + mIndex);
-        gGL.mCurrTextureUnitIndex = mIndex;
-    }
-}
-
-void LLTexUnit::enable(eTextureType type)
-{
-    if (mIndex < 0) return;
-
-    if ( (mCurrTexType != type || gGL.mDirty) && (type != TT_NONE) )
-    {
-        activate();
-        if (mCurrTexType != TT_NONE && !gGL.mDirty)
-        {
-            disable(); // Force a disable of a previous texture type if it's enabled.
-        }
-        mCurrTexType = type;
-
-        gGL.flush();
-    }
-}
-
-void LLTexUnit::disable(void)
-{
-    if (mIndex < 0) return;
-
-    if (mCurrTexType != TT_NONE)
-    {
-        unbind(mCurrTexType);
-        mCurrTexType = TT_NONE;
-    }
-}
-
-void LLTexUnit::bindFast(LLTexture* texture)
-{
-    LLImageGL* gl_tex = texture->getGLTexture();
-    texture->setActive();
-    glActiveTexture(GL_TEXTURE0 + mIndex);
-    gGL.mCurrTextureUnitIndex = mIndex;
-    mCurrTexture = gl_tex->getTexName();
-    mCurrTexType = gl_tex->getTarget();
-    if (!mCurrTexture)
-    {
-        LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("MISSING TEXTURE");
-        //if deleted, will re-generate it immediately
-        texture->forceImmediateUpdate();
-        gl_tex->forceUpdateBindStats();
-        texture->bindDefaultImage(mIndex);
-    }
-    glBindTexture(sGLTextureType[gl_tex->getTarget()], mCurrTexture);
-    mHasMipMaps = gl_tex->mHasMipMaps;
-    if (gl_tex->mTexOptionsDirty)
-    {
-        gl_tex->mTexOptionsDirty = false;
-        setTextureAddressModeFast(gl_tex->mAddressMode, gl_tex->getTarget());
-        setTextureFilteringOptionFast(gl_tex->mFilterOption, gl_tex->getTarget());
-    }
-}
-
-bool LLTexUnit::bind(LLTexture* texture, bool for_rendering, bool forceBind)
-{
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
-    stop_glerror();
-    if (mIndex >= 0)
-    {
-        gGL.flush();
-
-        LLImageGL* gl_tex = NULL ;
-
-        if (texture != NULL && (gl_tex = texture->getGLTexture()))
-        {
-            if (gl_tex->getTexName()) //if texture exists
-            {
-                //in audit, replace the selected texture by the default one.
-                if ((mCurrTexture != gl_tex->getTexName()) || forceBind)
-                {
-                    activate();
-                    enable(gl_tex->getTarget());
-                    mCurrTexture = gl_tex->getTexName();
-                    glBindTexture(sGLTextureType[gl_tex->getTarget()], mCurrTexture);
-                    if(gl_tex->updateBindStats())
-                    {
-                        texture->setActive() ;
-                        texture->updateBindStatsForTester() ;
-                    }
-                    mHasMipMaps = gl_tex->mHasMipMaps;
-                    if (gl_tex->mTexOptionsDirty)
-                    {
-                        gl_tex->mTexOptionsDirty = false;
-                        setTextureAddressMode(gl_tex->mAddressMode);
-                        setTextureFilteringOption(gl_tex->mFilterOption);
-                    }
-                }
-            }
-            else
-            {
-                //if deleted, will re-generate it immediately
-                texture->forceImmediateUpdate() ;
-
-                gl_tex->forceUpdateBindStats() ;
-                return texture->bindDefaultImage(mIndex);
-            }
-        }
-        else
-        {
-            if (texture)
-            {
-                LL_DEBUGS() << "NULL LLTexUnit::bind GL image" << LL_ENDL;
-            }
-            else
-            {
-                LL_DEBUGS() << "NULL LLTexUnit::bind texture" << LL_ENDL;
-            }
-            return false;
-        }
-    }
-    else
-    { // mIndex < 0
-        return false;
-    }
-
-    return true;
-}
-
-bool LLTexUnit::bind(LLImageGL* texture, bool for_rendering, bool forceBind, S32 usename)
-{
-    stop_glerror();
-    if (mIndex < 0) return false;
-
-    U32 texname = usename ? usename : texture->getTexName();
-
-    if(!texture)
-    {
-        LL_DEBUGS() << "NULL LLTexUnit::bind texture" << LL_ENDL;
-        return false;
-    }
-
-    if(!texname)
-    {
-        if(LLImageGL::sDefaultGLTexture && LLImageGL::sDefaultGLTexture->getTexName())
-        {
-            return bind(LLImageGL::sDefaultGLTexture) ;
-        }
-        stop_glerror();
-        return false ;
-    }
-
-    if ((mCurrTexture != texname) || forceBind)
-    {
-        gGL.flush();
-        stop_glerror();
-        activate();
-        stop_glerror();
-        enable(texture->getTarget());
-        stop_glerror();
-        mCurrTexture = texname;
-        glBindTexture(sGLTextureType[texture->getTarget()], mCurrTexture);
-        stop_glerror();
-        texture->updateBindStats();
-        mHasMipMaps = texture->mHasMipMaps;
-        if (texture->mTexOptionsDirty)
-        {
-            stop_glerror();
-            texture->mTexOptionsDirty = false;
-            setTextureAddressMode(texture->mAddressMode);
-            setTextureFilteringOption(texture->mFilterOption);
-            stop_glerror();
-        }
-    }
-
-    stop_glerror();
-
-    return true;
-}
-
-bool LLTexUnit::bind(LLCubeMap* cubeMap)
-{
-    if (mIndex < 0) return false;
-
-    gGL.flush();
-
-    if (cubeMap == NULL)
-    {
-        LL_WARNS() << "NULL LLTexUnit::bind cubemap" << LL_ENDL;
-        return false;
-    }
-
-    if (mCurrTexture != cubeMap->mImages[0]->getTexName())
-    {
-        if (LLCubeMap::sUseCubeMaps)
-        {
-            activate();
-            enable(LLTexUnit::TT_CUBE_MAP);
-            mCurrTexture = cubeMap->mImages[0]->getTexName();
-            glBindTexture(GL_TEXTURE_CUBE_MAP, mCurrTexture);
-            mHasMipMaps = cubeMap->mImages[0]->mHasMipMaps;
-            cubeMap->mImages[0]->updateBindStats();
-            if (cubeMap->mImages[0]->mTexOptionsDirty)
-            {
-                cubeMap->mImages[0]->mTexOptionsDirty = false;
-                setTextureAddressMode(cubeMap->mImages[0]->mAddressMode);
-                setTextureFilteringOption(cubeMap->mImages[0]->mFilterOption);
-            }
-            return true;
-        }
-        else
-        {
-            LL_WARNS() << "Using cube map without extension!" << LL_ENDL;
-            return false;
-        }
-    }
-    return true;
-}
-
-// LLRenderTarget is unavailible on the mapserver since it uses FBOs.
-bool LLTexUnit::bind(LLRenderTarget* renderTarget, bool bindDepth)
-{
-    if (mIndex < 0) return false;
-
-    gGL.flush();
-
-    if (bindDepth)
-    {
-        llassert(renderTarget->getDepth()); // target MUST have a depth buffer attachment
-
-        bindManual(renderTarget->getUsage(), renderTarget->getDepth());
-    }
-    else
-    {
-        bindManual(renderTarget->getUsage(), renderTarget->getTexture());
-    }
-
-    return true;
-}
-
-bool LLTexUnit::bindManual(eTextureType type, U32 texture, bool hasMips)
-{
-    if (mIndex < 0)
-    {
-        return false;
-    }
-
-    if(mCurrTexture != texture)
-    {
-        gGL.flush();
-
-        activate();
-        enable(type);
-        mCurrTexture = texture;
-        glBindTexture(sGLTextureType[type], texture);
-        mHasMipMaps = hasMips;
-    }
-    return true;
-}
-
-void LLTexUnit::unbind(eTextureType type)
-{
-    stop_glerror();
-
-    if (mIndex < 0) return;
-
-    //always flush and activate for consistency
-    //   some code paths assume unbind always flushes and sets the active texture
-    gGL.flush();
-    activate();
-
-    // Disabled caching of binding state.
-    if (mCurrTexType == type)
-    {
-        mCurrTexture = 0;
-
-        if (type == LLTexUnit::TT_TEXTURE)
-        {
-            glBindTexture(sGLTextureType[type], sWhiteTexture);
-        }
-        else
-        {
-            glBindTexture(sGLTextureType[type], 0);
-        }
-        stop_glerror();
-    }
-}
-
-void LLTexUnit::unbindFast(eTextureType type)
-{
-    activate();
-
-    // Disabled caching of binding state.
-    if (mCurrTexType == type)
-    {
-        mCurrTexture = 0;
-
-        if (type == LLTexUnit::TT_TEXTURE)
-        {
-            glBindTexture(sGLTextureType[type], sWhiteTexture);
-        }
-        else
-        {
-            glBindTexture(sGLTextureType[type], 0);
-        }
-    }
-}
-
-void LLTexUnit::setTextureAddressMode(eTextureAddressMode mode)
-{
-    if (mIndex < 0 || mCurrTexture == 0) return;
-
-    gGL.flush();
-
-    activate();
-
-    setTextureAddressModeFast(mode, mCurrTexType);
-}
-
-void LLTexUnit::setTextureAddressModeFast(eTextureAddressMode mode, eTextureType tex_type)
-{
-    glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_WRAP_S, sGLAddressMode[mode]);
-    glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_WRAP_T, sGLAddressMode[mode]);
-    if (tex_type == TT_CUBE_MAP || tex_type == TT_CUBE_MAP_ARRAY || tex_type == TT_TEXTURE_3D)
-    {
-        glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_WRAP_R, sGLAddressMode[mode]);
-    }
-}
-
-void LLTexUnit::setTextureFilteringOption(LLTexUnit::eTextureFilterOptions option)
-{
-    if (mIndex < 0 || mCurrTexture == 0 || mCurrTexType == LLTexUnit::TT_MULTISAMPLE_TEXTURE) return;
-
-    gGL.flush();
-
-    setTextureFilteringOptionFast(option, mCurrTexType);
-}
-
-void LLTexUnit::setTextureFilteringOptionFast(LLTexUnit::eTextureFilterOptions option, eTextureType tex_type)
-{
-    if (option == TFO_POINT)
-    {
-        glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    }
-    else
-    {
-        glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    }
-
-    if (option >= TFO_TRILINEAR && mHasMipMaps)
-    {
-        glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    }
-    else if (option >= TFO_BILINEAR)
-    {
-        if (mHasMipMaps)
-        {
-            glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
-        }
-        else
-        {
-            glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        }
-    }
-    else
-    {
-        if (mHasMipMaps)
-        {
-            glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
-        }
-        else
-        {
-            glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        }
-    }
-
-    if (gGLManager.mHasAnisotropic)
-    {
-        if (LLImageGL::sGlobalUseAnisotropic && option == TFO_ANISOTROPIC)
-        {
-            glTexParameterf(sGLTextureType[tex_type], GL_TEXTURE_MAX_ANISOTROPY, gGLManager.mMaxAnisotropy);
-        }
-        else
-        {
-            glTexParameterf(sGLTextureType[tex_type], GL_TEXTURE_MAX_ANISOTROPY, 1.f);
-        }
-    }
-}
-
-GLint LLTexUnit::getTextureSource(eTextureBlendSrc src)
-{
-    switch(src)
-    {
-        // All four cases should return the same value.
-        case TBS_PREV_COLOR:
-        case TBS_PREV_ALPHA:
-        case TBS_ONE_MINUS_PREV_COLOR:
-        case TBS_ONE_MINUS_PREV_ALPHA:
-            return GL_PREVIOUS;
-
-        // All four cases should return the same value.
-        case TBS_TEX_COLOR:
-        case TBS_TEX_ALPHA:
-        case TBS_ONE_MINUS_TEX_COLOR:
-        case TBS_ONE_MINUS_TEX_ALPHA:
-            return GL_TEXTURE;
-
-        // All four cases should return the same value.
-        case TBS_VERT_COLOR:
-        case TBS_VERT_ALPHA:
-        case TBS_ONE_MINUS_VERT_COLOR:
-        case TBS_ONE_MINUS_VERT_ALPHA:
-            return GL_PRIMARY_COLOR;
-
-        // All four cases should return the same value.
-        case TBS_CONST_COLOR:
-        case TBS_CONST_ALPHA:
-        case TBS_ONE_MINUS_CONST_COLOR:
-        case TBS_ONE_MINUS_CONST_ALPHA:
-            return GL_CONSTANT;
-
-        default:
-            LL_WARNS() << "Unknown eTextureBlendSrc: " << src << ".  Using Vertex Color instead." << LL_ENDL;
-            return GL_PRIMARY_COLOR;
-    }
-}
-
-GLint LLTexUnit::getTextureSourceType(eTextureBlendSrc src, bool isAlpha)
-{
-    switch(src)
-    {
-        // All four cases should return the same value.
-        case TBS_PREV_COLOR:
-        case TBS_TEX_COLOR:
-        case TBS_VERT_COLOR:
-        case TBS_CONST_COLOR:
-            return (isAlpha) ? GL_SRC_ALPHA: GL_SRC_COLOR;
-
-        // All four cases should return the same value.
-        case TBS_PREV_ALPHA:
-        case TBS_TEX_ALPHA:
-        case TBS_VERT_ALPHA:
-        case TBS_CONST_ALPHA:
-            return GL_SRC_ALPHA;
-
-        // All four cases should return the same value.
-        case TBS_ONE_MINUS_PREV_COLOR:
-        case TBS_ONE_MINUS_TEX_COLOR:
-        case TBS_ONE_MINUS_VERT_COLOR:
-        case TBS_ONE_MINUS_CONST_COLOR:
-            return (isAlpha) ? GL_ONE_MINUS_SRC_ALPHA : GL_ONE_MINUS_SRC_COLOR;
-
-        // All four cases should return the same value.
-        case TBS_ONE_MINUS_PREV_ALPHA:
-        case TBS_ONE_MINUS_TEX_ALPHA:
-        case TBS_ONE_MINUS_VERT_ALPHA:
-        case TBS_ONE_MINUS_CONST_ALPHA:
-            return GL_ONE_MINUS_SRC_ALPHA;
-
-        default:
-            LL_WARNS() << "Unknown eTextureBlendSrc: " << src << ".  Using Source Color or Alpha instead." << LL_ENDL;
-            return (isAlpha) ? GL_SRC_ALPHA: GL_SRC_COLOR;
-    }
-}
-
-// Useful for debugging that you've manually assigned a texture operation to the correct
-// texture unit based on the currently set active texture in opengl.
-void LLTexUnit::debugTextureUnit(void)
-{
-    if (mIndex < 0) return;
-
-    GLint activeTexture;
-    glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
-    if ((GL_TEXTURE0 + mIndex) != activeTexture)
-    {
-        U32 set_unit = (activeTexture - GL_TEXTURE0);
-        LL_WARNS() << "Incorrect Texture Unit!  Expected: " << set_unit << " Actual: " << mIndex << LL_ENDL;
-    }
-}
 
 LLLightState::LLLightState(S32 index)
 : mIndex(index),
@@ -733,10 +230,13 @@ void LLLightState::setPosition(const LLVector4& position)
     //always set position because modelview matrix may have changed
     ++gGL.mLightHash;
     mPosition = position;
-    //transform position by current modelview matrix
-    glm::vec4 pos(position);
-    pos = gGL.getModelviewMatrix() * pos;
-    mPosition.set(glm::value_ptr(pos));
+    //transform position by current modelview matrix; w rides along, so a
+    //directional light's zero stays zero
+    LLVector4a pos;
+    pos.loadua(position.mV);
+    LLVector4a eye;
+    gGL.getModelviewMatrix().transform4(pos, eye);
+    mPosition.set(eye.getF32ptr());
 }
 
 void LLLightState::setConstantAttenuation(const F32& atten)
@@ -790,27 +290,22 @@ void LLLightState::setSpotDirection(const LLVector3& direction)
     ++gGL.mLightHash;
 
     //transform direction by current modelview matrix
-    glm::vec3 dir(direction);
-    const glm::mat3 mat(gGL.getModelviewMatrix());
-    dir = mat * dir;
-
-    mSpotDirection.set(glm::value_ptr(dir));
+    LLVector4a dir;
+    dir.load3(direction.mV);
+    LLVector4a eye;
+    gGL.getModelviewMatrix().rotate(dir, eye);
+    mSpotDirection.set(eye.getF32ptr());
 }
 
 LLRender::LLRender()
   : mDirty(false),
     mCount(0),
     mMode(LLRender::TRIANGLES),
-    mCurrTextureUnitIndex(0),
-    mLineWidth(1.f), // <FS> Line width OGL core profile fix by Rye Mutt
-    // <FS:Ansariel> Don't ignore OpenGL max line width
-    mMaxLineWidthSmooth(1.f),
-    mMaxLineWidthAliased(1.f)
-    // </FS:Ansariel>
+    mCurrTextureUnitIndex(0)
 {
-    for (U32 i = 0; i < LL_NUM_TEXTURE_LAYERS; i++)
+    for (U32 i = 0; i < AL_NUM_TEXTURE_SLOTS; i++)
     {
-        mTexUnits[i].mIndex = i;
+        mTextureSlots[i].mIndex = i;
     }
 
     for (U32 i = 0; i < LL_NUM_LIGHT_UNITS; ++i)
@@ -834,12 +329,15 @@ LLRender::LLRender()
     {
         for (U32 j = 0; j < LL_MATRIX_STACK_DEPTH; ++j)
         {
-            mMatrix[i][j] = glm::identity<glm::mat4>();
+            mMatrix[i][j].setIdentity();
         }
         mMatIdx[i] = 0;
         mMatHash[i] = 0;
         mCurMatHash[i] = 0xFFFFFFFF;
     }
+    mCachedInvMdv.setIdentity();
+    mCachedInvProj.setIdentity();
+    mCachedMVP.setIdentity();
 
     mLightHash = 0;
 }
@@ -851,7 +349,7 @@ LLRender::~LLRender()
 
 bool LLRender::init(bool needs_vertex_buffer)
 {
-#if LL_WINDOWS
+#if GL_ARB_debug_output && !LL_DARWIN
     if (gGLManager.mHasDebugOutput && gDebugGL)
     { //setup debug output callback
         //glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DEBUG_SEVERITY_LOW_ARB, 0, NULL, GL_TRUE);
@@ -862,6 +360,14 @@ bool LLRender::init(bool needs_vertex_buffer)
 
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+    // Fresh context: nothing is bound at UB_LIGHTS/UB_MATRICES yet, whatever a previous one had.
+    mLightsUBOBound   = false;
+    mMatricesUBOBound = false;
+
+    // Build this context's sampler objects before anything can ask for one.
+    mSamplerCache.warmup();
+
 
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
     gGL.setAmbientLightColor(LLColor4::black);
@@ -879,41 +385,23 @@ bool LLRender::init(bool needs_vertex_buffer)
 #endif
 
     { //bind a dummy vertex array object so we're core profile compliant
-        U32 ret;
-        glGenVertexArrays(1, &ret);
-        glBindVertexArray(ret);
+        glGenVertexArrays(1, &mDummyVAO);
+        glBindVertexArray(mDummyVAO);
     }
 
     if (needs_vertex_buffer)
     {
         initVertexBuffer();
     }
-
-    // <FS:Ansariel> Don't ignore OpenGL max line width
-    GLfloat range[2];
-    glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range);
-    stop_glerror();
-    mMaxLineWidthAliased = range[1];
-    glGetFloatv(GL_SMOOTH_LINE_WIDTH_RANGE, range);
-    stop_glerror();
-    mMaxLineWidthSmooth = range[1];
-    // </FS:Ansariel>
-
     return true;
 }
 
 void LLRender::initVertexBuffer()
 {
-    llassert_always(mBuffer.isNull()) ;
+    llassert_always(mBuffer.isNull());
     stop_glerror();
     mBuffer = new LLVertexBuffer(immediate_mask);
-    // <FS:Ansariel> Warn in case of allocation failure
-    //mBuffer->allocateBuffer(4096, 0);
-    if (!mBuffer->allocateBuffer(4096, 0))
-    {
-        // If this doesn't work, we're knee-deep in trouble!
-        LL_WARNS() << "Failed to allocate Vertex Buffer for common rendering" << LL_ENDL;
-    }
+    mBuffer->allocateBuffer(4096, 0);
     mBuffer->getVertexStrider(mVerticesp);
     mBuffer->getTexCoord0Strider(mTexcoordsp);
     mBuffer->getColorStrider(mColorsp);
@@ -922,82 +410,245 @@ void LLRender::initVertexBuffer()
 
 void LLRender::resetVertexBuffer()
 {
-    mBuffer = NULL;
+    mBuffer = nullptr;
+    mBufferDataList = nullptr;
+    mVBCache.clear();
 }
 
 void LLRender::shutdown()
 {
+    // NOTE: gGL is thread_local, so this runs once per thread that ever touched it --
+    // including the texture upload thread, which owns a second shared context. Everything
+    // released here must therefore belong to THIS thread's context and no other. That is
+    // why mSamplerCache is a member: a static one would have the upload thread deleting
+    // the render thread's samplers. mDummyVAO and mLightsUBO stay zero on worker threads.
+    clearSamplers();
+
     resetVertexBuffer();
+    if (mDummyVAO)
+    {
+        // ~LLRender calls shutdown() again during thread_local destruction, after the
+        // context is gone. Normally the explicit gGL.shutdown() during teardown got here
+        // first and zeroed this, but an abnormal exit skips it and leaves a live handle
+        // with a dead context -- deleting the VAO then faults inside the driver. The name
+        // dies with the context regardless, so skipping the delete costs nothing.
+        //
+        // Same gate LLUniformBuffer::release() and LLVertexBuffer already use.
+        if (gGLManager.mInited)
+        {
+            glBindVertexArray(0);
+            glDeleteVertexArrays(1, &mDummyVAO);
+        }
+        mDummyVAO = 0;
+    }
+
+    // Drop the shared light block with the context that owns it. Forcing a re-pack (rather
+    // than just clearing mLightsUBOBound) means a restarted context can never rebind a
+    // buffer name from the dead one.
+    mLightsUBO.release();
+    mLightsUBOHash  = 0xFFFFFFFFu;
+    mLightsUBOBound = false;
+
+    // Same for the matrix block. syncMatrices re-initialises the shadow on the next use
+    // because release() leaves it unallocated.
+    mMatricesUBO.release();
+    for (U32 i = 0; i < NUM_MATRIX_MODES; ++i)
+    {
+        mMatricesUBOHash[i] = 0xFFFFFFFFu;
+    }
+    mMatricesUBOBound = false;
+}
+
+void LLRender::clearSamplers()
+{
+    mSamplerCache.clear();
+
+    for (ALTextureSlot& unit : mTextureSlots)
+    {
+        unit.mCurrSampler = 0;
+    }
+
+}
+
+void LLRender::warmupSamplers()
+{
+    mSamplerCache.warmup();
 }
 
 void LLRender::refreshState(void)
 {
     mDirty = true;
 
+    // Called when GL state may have been changed behind our back, so re-assert the shared
+    // blocks' bindings along with the texture units and colour mask.
+    mLightsUBOBound   = false;
+    mMatricesUBOBound = false;
+
     U32 active_unit = mCurrTextureUnitIndex;
 
-    for (U32 i = 0; i < mTexUnits.size(); i++)
+    for (U32 i = 0; i < mTextureSlots.size(); i++)
     {
-        mTexUnits[i].refreshState();
+        mTextureSlots[i].refreshState();
     }
 
-    mTexUnits[active_unit].activate();
+    mTextureSlots[active_unit].activate();
 
     setColorMask(mCurrColorMask[0], mCurrColorMask[1], mCurrColorMask[2], mCurrColorMask[3]);
+
+    // Unconditional re-issue: setPolygonOffset would see the cache already agreeing with the
+    // requested value and skip the GL call, leaving the fresh context at its 0,0 default.
+    rebasePolygonOffset();
 
     flush();
 
     mDirty = false;
 }
 
+// Pack the light arrays into the shared block. Returns true when the bytes moved.
+bool LLRender::packLightsUBO()
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
+
+    // Must match the std140 layout the shaders declare: five 16-byte-strided [8] arrays
+    // (128 bytes each) then a float3 rounded up to the block's 16-byte multiple.
+    static_assert(sizeof(LightsUBOData) == 656, "LightsUBOData must match std140 (656 bytes)");
+
+    LightsUBOData d{};
+
+    for (U32 i = 0; i < LL_NUM_LIGHT_UNITS; i++)
+    {
+        const LLLightState* light = &mLightState[i];
+
+        // std140 pads every array element to 16 bytes whatever the element type, so each
+        // row below is float[4] and the unused tail components stay zero.
+        memcpy(d.light_position[i], light->mPosition.mV, sizeof(F32) * 4);
+        memcpy(d.light_direction[i], light->mSpotDirection.mV, sizeof(F32) * 3);
+
+        d.light_attenuation[i][0] = light->mLinearAtten;
+        d.light_attenuation[i][1] = light->mQuadraticAtten;
+        d.light_attenuation[i][2] = light->mSpecular.mV[2];
+        d.light_attenuation[i][3] = light->mSpecular.mV[3];
+
+        d.light_deferred_attenuation[i][0] = light->mSize;
+        d.light_deferred_attenuation[i][1] = light->mFalloff;
+
+        memcpy(d.light_diffuse[i], light->mDiffuse.mV, sizeof(F32) * 3);
+    }
+
+    memcpy(d.light_ambient, mAmbientLightColor.mV, sizeof(F32) * 3);
+
+    if (memcmp(&d, &mLightsUBOData, sizeof(LightsUBOData)) == 0)
+    {
+        return false;
+    }
+
+    mLightsUBOData = d;
+    return true;
+}
+
 void LLRender::syncLightState()
 {
-    LLGLSLShader *shader = LLGLSLShader::sCurBoundShaderPtr;
+    // The light ARRAYS live in the shared UB_LIGHTS block: packed once when the light state
+    // actually moves, not once per program. mLightHash is only a cheap trigger -- setPosition
+    // and setSpotDirection bump it unconditionally (the modelview may have changed), so the
+    // pack still byte-compares before spending an upload.
+    if (mLightsUBOHash != mLightHash || !mLightsUBO.allocated())
+    {
+        mLightsUBOHash = mLightHash;
+        if (packLightsUBO() || !mLightsUBO.allocated())
+        {
+            mLightsUBO.update(&mLightsUBOData, sizeof(LightsUBOData));
+            mLightsUBOBound = false; // re-assert the binding against the new store
+        }
+    }
 
-    if (!shader)
+    if (!mLightsUBOBound)
+    {
+        mLightsUBO.bind(LLGLSLShader::UB_LIGHTS);
+        mLightsUBOBound = true;
+    }
+
+    // Everything below is still a LOOSE per-program uniform, so it keeps the per-shader hash
+    // gate. These names have writers outside LLRender (LLPipeline::bindDeferredShader pushes
+    // an auto-adjusted sunlight_color; sun_up_factor is written from the pipeline, the draw
+    // pools and LLSettingsVO), so folding them into the shared block would let one writer
+    // stomp another.
+    LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
+
+    if (!shader || shader->mLightHash == mLightHash)
     {
         return;
     }
 
-    if (shader->mLightHash != mLightHash)
+    shader->mLightHash = mLightHash;
+
+    shader->uniform1i(LLShaderMgr::SUN_UP_FACTOR, mLightState[0].mSunIsPrimary ? 1 : 0);
+
+    if (sClassicMode)
     {
-        shader->mLightHash = mLightHash;
+        LLVector3 diffuse(mLightState[0].mDiffuse.mV);
+        LLVector3 diffuse_b(mLightState[0].mDiffuseB.mV);
 
-        LLVector4 position[LL_NUM_LIGHT_UNITS];
-        LLVector3 direction[LL_NUM_LIGHT_UNITS];
-        LLVector4 attenuation[LL_NUM_LIGHT_UNITS];
-        LLVector3 diffuse[LL_NUM_LIGHT_UNITS];
-        LLVector3 diffuse_b[LL_NUM_LIGHT_UNITS];
-        bool      sun_primary[LL_NUM_LIGHT_UNITS];
-        LLVector2 size[LL_NUM_LIGHT_UNITS];
+        shader->uniform3fv(LLShaderMgr::AMBIENT, 1, mAmbientLightColor.mV);
+        shader->uniform3fv(LLShaderMgr::SUNLIGHT_COLOR, 1, diffuse.mV);
+        shader->uniform3fv(LLShaderMgr::MOONLIGHT_COLOR, 1, diffuse_b.mV);
+    }
+}
 
-        for (U32 i = 0; i < LL_NUM_LIGHT_UNITS; i++)
-        {
-            LLLightState *light = &mLightState[i];
+void LLRender::packMatricesUBO()
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
 
-            position[i]  = light->mPosition;
-            direction[i] = light->mSpotDirection;
-            attenuation[i].set(light->mLinearAtten, light->mQuadraticAtten, light->mSpecular.mV[2], light->mSpecular.mV[3]);
-            diffuse[i].set(light->mDiffuse.mV);
-            diffuse_b[i].set(light->mDiffuseB.mV);
-            sun_primary[i] = light->mSunIsPrimary;
-            size[i].set(light->mSize, light->mFalloff);
-        }
+    static_assert(sizeof(MatricesUBOData) == 368, "MatricesUBOData must match std140 (368 bytes)");
 
-        shader->uniform4fv(LLShaderMgr::LIGHT_POSITION, LL_NUM_LIGHT_UNITS, position[0].mV);
-        shader->uniform3fv(LLShaderMgr::LIGHT_DIRECTION, LL_NUM_LIGHT_UNITS, direction[0].mV);
-        shader->uniform4fv(LLShaderMgr::LIGHT_ATTENUATION, LL_NUM_LIGHT_UNITS, attenuation[0].mV);
-        shader->uniform2fv(LLShaderMgr::LIGHT_DEFERRED_ATTENUATION, LL_NUM_LIGHT_UNITS, size[0].mV);
-        shader->uniform3fv(LLShaderMgr::LIGHT_DIFFUSE, LL_NUM_LIGHT_UNITS, diffuse[0].mV);
-        shader->uniform3fv(LLShaderMgr::LIGHT_AMBIENT, 1, mAmbientLightColor.mV);
-        shader->uniform1i(LLShaderMgr::SUN_UP_FACTOR, sun_primary[0] ? 1 : 0);
+    const LLMatrix4a& mdv  = mMatrix[MM_MODELVIEW][mMatIdx[MM_MODELVIEW]];
+    const LLMatrix4a& proj = mMatrix[MM_PROJECTION][mMatIdx[MM_PROJECTION]];
+    const LLMatrix4a& tex  = mMatrix[MM_TEXTURE0][mMatIdx[MM_TEXTURE0]];
 
-        if (sClassicMode)
-        {
-            shader->uniform3fv(LLShaderMgr::AMBIENT, 1, mAmbientLightColor.mV);
-            shader->uniform3fv(LLShaderMgr::SUNLIGHT_COLOR, 1, diffuse[0].mV);
-            shader->uniform3fv(LLShaderMgr::MOONLIGHT_COLOR, 1, diffuse_b[0].mV);
-        }
+    const bool mdv_moved  = mMatHash[MM_MODELVIEW]  != mMatricesUBOHash[MM_MODELVIEW];
+    const bool proj_moved = mMatHash[MM_PROJECTION] != mMatricesUBOHash[MM_PROJECTION];
+
+    if (mdv_moved)
+    {
+        // The modelview is affine (view * model, no perspective), so the affine inverse is
+        // exact and much cheaper than a general 4x4 inverse.
+        mCachedInvMdv.setAffineInverse(mdv);
+    }
+    if (proj_moved)
+    {
+        // Projection is not affine -- general inverse required.
+        mCachedInvProj.setInverse(proj);
+    }
+    if (mdv_moved || proj_moved)
+    {
+        // the modelview first, then the projection
+        mCachedMVP.setMul(mdv, proj);
+    }
+
+    MatricesUBOData d;
+    memcpy(d.modelview,            mdv.getF32ptr(),            sizeof(d.modelview));
+    memcpy(d.projection,           proj.getF32ptr(),           sizeof(d.projection));
+    memcpy(d.modelview_projection, mCachedMVP.getF32ptr(),     sizeof(d.modelview_projection));
+    memcpy(d.inv_proj,             mCachedInvProj.getF32ptr(), sizeof(d.inv_proj));
+    memcpy(d.texture0,             tex.getF32ptr(),            sizeof(d.texture0));
+
+    // normal_matrix is the upper 3x3 of the inverse modelview transposed: column c of the
+    // block is lane c of the inverse's first three rows, i.e. inv[4*k + c] for k = 0..2.
+    // This reproduces exactly the nine floats the loose uniformMatrix3fv used to upload.
+    const F32* inv = mCachedInvMdv.getF32ptr();
+    for (U32 c = 0; c < 3; ++c)
+    {
+        d.normal[c][0] = inv[0 * 4 + c];
+        d.normal[c][1] = inv[1 * 4 + c];
+        d.normal[c][2] = inv[2 * 4 + c];
+        d.normal[c][3] = 0.f;
+    }
+
+    U8* shadow = mMatricesUBO.beginWrite();
+    if (memcmp(shadow, &d, sizeof(d)) != 0)
+    {
+        memcpy(shadow, &d, sizeof(d));
+        mMatricesUBO.endWrite(0, sizeof(d));
     }
 }
 
@@ -1006,142 +657,53 @@ void LLRender::syncMatrices()
     STOP_GLERROR;
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
 
-    static const U32 name[] =
-    {
-        LLShaderMgr::MODELVIEW_MATRIX,
-        LLShaderMgr::PROJECTION_MATRIX,
-        LLShaderMgr::TEXTURE_MATRIX0,
-        LLShaderMgr::TEXTURE_MATRIX1,
-        LLShaderMgr::TEXTURE_MATRIX2,
-        LLShaderMgr::TEXTURE_MATRIX3,
-    };
-
     LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
-
-    static glm::mat4 cached_mvp;
-    static glm::mat4 cached_inv_mdv;
-    static U32 cached_mvp_mdv_hash = 0xFFFFFFFF;
-    static U32 cached_mvp_proj_hash = 0xFFFFFFFF;
-
-    static glm::mat4 cached_normal;
-    static U32 cached_normal_hash = 0xFFFFFFFF;
 
     if (shader)
     {
-        bool mvp_done = false;
-
-        U32 i = MM_MODELVIEW;
-        if (mMatHash[MM_MODELVIEW] != shader->mMatHash[MM_MODELVIEW])
-        { //update modelview, normal, and MVP
-            const glm::mat4& mat = mMatrix[MM_MODELVIEW][mMatIdx[MM_MODELVIEW]];
-
-            // if MDV has changed, update the cached inverse as well
-            if (cached_mvp_mdv_hash != mMatHash[MM_MODELVIEW])
-            {
-                cached_inv_mdv = glm::inverse(mat);
-            }
-
-            shader->uniformMatrix4fv(name[MM_MODELVIEW], 1, GL_FALSE, glm::value_ptr(mat));
-            shader->mMatHash[MM_MODELVIEW] = mMatHash[MM_MODELVIEW];
-
-            //update normal matrix
-            S32 loc = shader->getUniformLocation(LLShaderMgr::NORMAL_MATRIX);
-            if (loc > -1)
-            {
-                if (cached_normal_hash != mMatHash[i])
-                {
-                    cached_normal = glm::transpose(cached_inv_mdv);
-                    cached_normal_hash = mMatHash[i];
-                }
-
-                auto norm = glm::value_ptr(cached_normal);
-
-                F32 norm_mat[] =
-                {
-                    norm[0], norm[1], norm[2],
-                    norm[4], norm[5], norm[6],
-                    norm[8], norm[9], norm[10]
-                };
-
-                shader->uniformMatrix3fv(LLShaderMgr::NORMAL_MATRIX, 1, GL_FALSE, norm_mat);
-            }
-
-            if (shader->getUniformLocation(LLShaderMgr::INVERSE_MODELVIEW_MATRIX))
-            {
-                shader->uniformMatrix4fv(LLShaderMgr::INVERSE_MODELVIEW_MATRIX, 1, GL_FALSE, glm::value_ptr(cached_inv_mdv));
-            }
-
-            //update MVP matrix
-            mvp_done = true;
-            loc = shader->getUniformLocation(LLShaderMgr::MODELVIEW_PROJECTION_MATRIX);
-            if (loc > -1)
-            {
-                U32 proj = MM_PROJECTION;
-
-                if (cached_mvp_mdv_hash != mMatHash[i] || cached_mvp_proj_hash != mMatHash[MM_PROJECTION])
-                {
-                    cached_mvp = mat;
-                    cached_mvp = mMatrix[proj][mMatIdx[proj]] * cached_mvp;
-                    cached_mvp_mdv_hash = mMatHash[i];
-                    cached_mvp_proj_hash = mMatHash[MM_PROJECTION];
-                }
-
-                shader->uniformMatrix4fv(LLShaderMgr::MODELVIEW_PROJECTION_MATRIX, 1, GL_FALSE, glm::value_ptr(cached_mvp));
-            }
-        }
-
-        i = MM_PROJECTION;
-        if (mMatHash[MM_PROJECTION] != shader->mMatHash[MM_PROJECTION])
-        { //update projection matrix, normal, and MVP
-            const glm::mat4& mat = mMatrix[MM_PROJECTION][mMatIdx[MM_PROJECTION]];
-
-            // GZ: This was previously disabled seemingly due to a bug involving the deferred renderer's regular pushing and popping of mats.
-            // We're reenabling this and cleaning up the code around that - that would've been the appropriate course initially.
-            // Anything beyond the standard proj and inv proj mats are special cases.  Please setup special uniforms accordingly in the future.
-            if (shader->getUniformLocation(LLShaderMgr::INVERSE_PROJECTION_MATRIX))
-            {
-                glm::mat4 inv_proj = glm::inverse(mat);
-                shader->uniformMatrix4fv(LLShaderMgr::INVERSE_PROJECTION_MATRIX, 1, false, glm::value_ptr(inv_proj));
-            }
-
-            // Used by some full screen effects - such as full screen lights, glow, etc.
-            if (shader->getUniformLocation(LLShaderMgr::IDENTITY_MATRIX))
-            {
-                shader->uniformMatrix4fv(LLShaderMgr::IDENTITY_MATRIX, 1, GL_FALSE, glm::value_ptr(glm::identity<glm::mat4>()));
-            }
-
-            shader->uniformMatrix4fv(name[MM_PROJECTION], 1, GL_FALSE, glm::value_ptr(mat));
-            shader->mMatHash[MM_PROJECTION] = mMatHash[MM_PROJECTION];
-
-            if (!mvp_done)
-            {
-                //update MVP matrix
-                S32 loc = shader->getUniformLocation(LLShaderMgr::MODELVIEW_PROJECTION_MATRIX);
-                if (loc > -1)
-                {
-                    if (cached_mvp_mdv_hash != mMatHash[MM_PROJECTION] || cached_mvp_proj_hash != mMatHash[MM_PROJECTION])
-                    {
-                        U32 mdv = MM_MODELVIEW;
-                        cached_mvp = mat;
-                        cached_mvp *= mMatrix[mdv][mMatIdx[mdv]];
-                        cached_mvp_mdv_hash = mMatHash[MM_MODELVIEW];
-                        cached_mvp_proj_hash = mMatHash[MM_PROJECTION];
-                    }
-
-                    shader->uniformMatrix4fv(LLShaderMgr::MODELVIEW_PROJECTION_MATRIX, 1, GL_FALSE, glm::value_ptr(cached_mvp));
-                }
-            }
-        }
-
-        for (i = MM_TEXTURE0; i < NUM_MATRIX_MODES; ++i)
+        // The matrices live in the shared UB_MATRICES block: packed once per matrix EPOCH (any
+        // mMatHash movement since the last pack) rather than once per program, so a program
+        // bind costs no matrix work at all. The derived matrices (inverses, normal, MVP) are
+        // recomputed per epoch under per-stack gates inside the pack, and unconditionally --
+        // any program may read them from the block, so the old hasUniform() gates are gone.
+        if (!mMatricesUBO.allocated())
         {
-            if (mMatHash[i] != shader->mMatHash[i])
+            // Fresh context (first use, or re-init after shutdown released the old block):
+            // re-pack and re-bind everything.
+            mMatricesUBO.initShadowed(sizeof(MatricesUBOData));
+            for (U32 i = 0; i < NUM_MATRIX_MODES; ++i)
             {
-                shader->uniformMatrix4fv(name[i], 1, GL_FALSE, glm::value_ptr(mMatrix[i][mMatIdx[i]]));
-                shader->mMatHash[i] = mMatHash[i];
+                mMatricesUBOHash[i] = 0xFFFFFFFFu;
+            }
+            mMatricesUBOBound = false;
+        }
+
+        if (mMatHash[MM_MODELVIEW]  != mMatricesUBOHash[MM_MODELVIEW]  ||
+            mMatHash[MM_PROJECTION] != mMatricesUBOHash[MM_PROJECTION] ||
+            mMatHash[MM_TEXTURE0]   != mMatricesUBOHash[MM_TEXTURE0])
+        {
+            packMatricesUBO();
+            for (U32 i = 0; i < NUM_MATRIX_MODES; ++i)
+            {
+                mMatricesUBOHash[i] = mMatHash[i];
             }
         }
 
+        if (!mMatricesUBOBound)
+        {
+            // First attach on this context (or a refreshState() re-assert): bindCurrent both
+            // uploads any pending bytes and (re)claims the binding point -- needed even when
+            // clean, e.g. UPDATE_DIRECT where endWrite uploads without ever dirtying.
+            mMatricesUBO.bindCurrent(LLGLSLShader::UB_MATRICES);
+            mMatricesUBOBound = true;
+        }
+        else
+        {
+            // Per-draw steady state: upload when the pack dirtied the shadow, otherwise just
+            // confirm the last flushed slice is still readable (streaming-ring reuse can
+            // invalidate it). No GL calls at all on the clean-and-live path.
+            mMatricesUBO.ensureCurrent(LLGLSLShader::UB_MATRICES);
+        }
 
         if (shader->mFeatures.hasLighting || shader->mFeatures.calculatesLighting || shader->mFeatures.calculatesAtmospherics)
         { //also sync light state
@@ -1156,7 +718,9 @@ void LLRender::translatef(const GLfloat& x, const GLfloat& y, const GLfloat& z)
     flush();
 
     {
-        mMatrix[mMatrixMode][mMatIdx[mMatrixMode]] = glm::translate(mMatrix[mMatrixMode][mMatIdx[mMatrixMode]], glm::vec3(x, y, z));
+        // the translation applies first: T then the stack's matrix
+        LLMatrix4a& m = mMatrix[mMatrixMode][mMatIdx[mMatrixMode]];
+        m.setMul(LLMatrix4a::translation(x, y, z), m);
         mMatHash[mMatrixMode]++;
     }
 }
@@ -1166,7 +730,8 @@ void LLRender::scalef(const GLfloat& x, const GLfloat& y, const GLfloat& z)
     flush();
 
     {
-        mMatrix[mMatrixMode][mMatIdx[mMatrixMode]] = glm::scale(mMatrix[mMatrixMode][mMatIdx[mMatrixMode]], glm::vec3(x, y, z));
+        LLMatrix4a& m = mMatrix[mMatrixMode][mMatIdx[mMatrixMode]];
+        m.setMul(LLMatrix4a::scaling(x, y, z), m);
         mMatHash[mMatrixMode]++;
     }
 }
@@ -1176,7 +741,11 @@ void LLRender::ortho(F32 left, F32 right, F32 bottom, F32 top, F32 zNear, F32 zF
     flush();
 
     {
-        mMatrix[mMatrixMode][mMatIdx[mMatrixMode]] *= glm::ortho(left, right, bottom, top, zNear, zFar);
+        // al_ortho emits reversed-ZO under reverse-Z (mapping legacy z in [-1,1] fully
+        // inside the [0,1] clip volume, so 2D/UI content at z in [-1,0) is not clipped),
+        // and the plain ortho otherwise. Converts all gGL.ortho() callers at once.
+        LLMatrix4a& m = mMatrix[mMatrixMode][mMatIdx[mMatrixMode]];
+        m.setMul(al_ortho(left, right, bottom, top, zNear, zFar), m);
         mMatHash[mMatrixMode]++;
     }
 }
@@ -1186,7 +755,8 @@ void LLRender::rotatef(const GLfloat& a, const GLfloat& x, const GLfloat& y, con
     flush();
 
     {
-        mMatrix[mMatrixMode][mMatIdx[mMatrixMode]] = glm::rotate(mMatrix[mMatrixMode][mMatIdx[mMatrixMode]], glm::radians(a), glm::vec3(x,y,z));
+        LLMatrix4a& m = mMatrix[mMatrixMode][mMatIdx[mMatrixMode]];
+        m.setMul(LLMatrix4a::rotation(a * DEG_TO_RAD, LLVector4a(x, y, z)), m);
         mMatHash[mMatrixMode]++;
     }
 }
@@ -1226,49 +796,45 @@ void LLRender::popMatrix()
 
 void LLRender::loadMatrix(const GLfloat* m)
 {
+    LLMatrix4a loaded;
+    loaded.loadu(m);
+    loadMatrix(loaded);
+}
+
+void LLRender::loadMatrix(const LLMatrix4a& m)
+{
     flush();
     {
-        mMatrix[mMatrixMode][mMatIdx[mMatrixMode]] = glm::make_mat4((GLfloat*) m);
+        mMatrix[mMatrixMode][mMatIdx[mMatrixMode]] = m;
         mMatHash[mMatrixMode]++;
     }
 }
 
 void LLRender::multMatrix(const GLfloat* m)
 {
+    LLMatrix4a factor;
+    factor.loadu(m);
+    multMatrix(factor);
+}
+
+void LLRender::multMatrix(const LLMatrix4a& m)
+{
     flush();
     {
-        mMatrix[mMatrixMode][mMatIdx[mMatrixMode]] *= glm::make_mat4(m);
+        // the new matrix applies first, then what the stack held
+        LLMatrix4a& top = mMatrix[mMatrixMode][mMatIdx[mMatrixMode]];
+        top.setMul(m, top);
         mMatHash[mMatrixMode]++;
     }
 }
 
 void LLRender::matrixMode(eMatrixMode mode)
 {
-    if (mode == MM_TEXTURE)
-    {
-        U32 tex_index = gGL.getCurrentTexUnitIndex();
-        // the shaders don't actually reference anything beyond texture_matrix0/1 outside of terrain rendering
-        llassert(tex_index <= 3);
-        mode = eMatrixMode(MM_TEXTURE0 + tex_index);
-        if (mode > MM_TEXTURE3)
-        {
-            // getCurrentTexUnitIndex() can go as high as 32 (LL_NUM_TEXTURE_LAYERS)
-            // Large value will result in a crash at mMatrix
-            LL_WARNS_ONCE() << "Attempted to assign matrix mode out of bounds: " << mode << LL_ENDL;
-            mode = MM_TEXTURE0;
-        }
-    }
-
     mMatrixMode = mode;
 }
 
 LLRender::eMatrixMode LLRender::getMatrixMode()
 {
-    if (mMatrixMode >= MM_TEXTURE0 && mMatrixMode <= MM_TEXTURE3)
-    { //always return MM_TEXTURE if current matrix mode points at any texture matrix
-        return MM_TEXTURE;
-    }
-
     return mMatrixMode;
 }
 
@@ -1280,17 +846,17 @@ void LLRender::loadIdentity()
     {
         llassert_always(mMatrixMode < NUM_MATRIX_MODES) ;
 
-        mMatrix[mMatrixMode][mMatIdx[mMatrixMode]] = glm::identity<glm::mat4>();
+        mMatrix[mMatrixMode][mMatIdx[mMatrixMode]].setIdentity();
         mMatHash[mMatrixMode]++;
     }
 }
 
-const glm::mat4& LLRender::getModelviewMatrix()
+const LLMatrix4a& LLRender::getModelviewMatrix()
 {
     return mMatrix[MM_MODELVIEW][mMatIdx[MM_MODELVIEW]];
 }
 
-const glm::mat4& LLRender::getProjectionMatrix()
+const LLMatrix4a& LLRender::getProjectionMatrix()
 {
     return mMatrix[MM_PROJECTION][mMatIdx[MM_PROJECTION]];
 }
@@ -1473,16 +1039,16 @@ void LLRender::blendFunc(eBlendFactor color_sfactor, eBlendFactor color_dfactor,
     }
 }
 
-LLTexUnit* LLRender::getTexUnit(U32 index)
+ALTextureSlot* LLRender::getTextureSlot(U32 index)
 {
-    if (index < mTexUnits.size())
+    if (index < mTextureSlots.size())
     {
-        return &mTexUnits[index];
+        return &mTextureSlots[index];
     }
     else
     {
         LL_DEBUGS() << "Non-existing texture unit layer requested: " << index << LL_ENDL;
-        return &mDummyTexUnit;
+        return &mDummySlot;
     }
 }
 
@@ -1505,25 +1071,6 @@ void LLRender::setAmbientLightColor(const LLColor4& color)
         mAmbientLightColor = color;
     }
 }
-
-// <FS> Line width OGL core profile fix by Rye Mutt
-void LLRender::setLineWidth(F32 line_width)
-{
-    if (line_width > 1.f)
-    {
-        line_width = llmin(line_width, glIsEnabled(GL_LINE_SMOOTH) ? mMaxLineWidthSmooth : mMaxLineWidthAliased);
-    }
-    if (mLineWidth != line_width || mDirty)
-    {
-        if (mMode == LLRender::LINES || mMode == LLRender::LINE_STRIP)
-        {
-            flush();
-        }
-        mLineWidth = line_width;
-        glLineWidth(line_width);
-    }
-}
-// </FS>
 
 bool LLRender::verifyTexUnitActive(U32 unitToVerify)
 {
@@ -1548,21 +1095,21 @@ void LLRender::clearErrors()
 
 void LLRender::beginList(std::list<LLVertexBufferData> *list)
 {
-    if (sBufferDataList)
+    if (mBufferDataList)
     {
         LL_ERRS() << "beginList called while another list is open." << LL_ENDL;
     }
     llassert(LLGLSLShader::sCurBoundShaderPtr == &gUIProgram);
     flush();
-    sBufferDataList = list;
+    mBufferDataList = list;
 }
 
 void LLRender::endList()
 {
-    if (sBufferDataList)
+    if (mBufferDataList)
     {
         flush();
-        sBufferDataList = nullptr;
+        mBufferDataList = nullptr;
     }
     else
     {
@@ -1650,14 +1197,15 @@ void LLRender::flush()
 
             U32 attribute_mask = LLGLSLShader::sCurBoundShaderPtr->mAttributeMask;
 
-            if (sBufferDataList)
+            if (mBufferDataList)
             {
                 vb = genBuffer(attribute_mask, count);
-                sBufferDataList->emplace_back(
+                mBufferDataList->emplace_back(
                     vb,
                     mMode,
                     count,
-                    gGL.getTexUnit(0)->mCurrTexture,
+                    gGL.getTextureSlot(0)->mCurrTexture,
+                    gGL.getTextureSlot(0)->mCurrSampler,
                     mMatrix[MM_MODELVIEW][mMatIdx[MM_MODELVIEW]],
                     mMatrix[MM_PROJECTION][mMatIdx[MM_PROJECTION]],
                     mMatrix[MM_TEXTURE0][mMatIdx[MM_TEXTURE0]]
@@ -1713,9 +1261,8 @@ LLVertexBuffer* LLRender::bufferfromCache(U32 attribute_mask, U32 count)
     // To leverage this, we maintain a running hash of the vertex stream being
     // built up before a flush, and then check that hash against a VB
     // cache just before creating a vertex buffer in VRAM
-    std::unordered_map<U64, LLVBCache>::iterator cache = sVBCache.find(vhash);
-
-    if (cache != sVBCache.end())
+    boost::unordered_map<U64, LLVBCache>::iterator cache = mVBCache.find(vhash);
+    if (cache != mVBCache.end())
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_VERTEX("vb cache hit");
         // cache hit, just use the cached buffer
@@ -1727,7 +1274,7 @@ LLVertexBuffer* LLRender::bufferfromCache(U32 attribute_mask, U32 count)
         LL_PROFILE_ZONE_NAMED_CATEGORY_VERTEX("vb cache miss");
         vb = genBuffer(attribute_mask, count);
 
-        sVBCache[vhash] = { vb , std::chrono::steady_clock::now() };
+        mVBCache[vhash] = { vb , std::chrono::steady_clock::now() };
 
         static U32 miss_count = 0;
         miss_count++;
@@ -1739,11 +1286,11 @@ LLVertexBuffer* LLRender::bufferfromCache(U32 attribute_mask, U32 count)
 
             using namespace std::chrono_literals;
             // every 1024 misses, clean the cache of any VBs that haven't been touched in the last second
-            for (std::unordered_map<U64, LLVBCache>::iterator iter = sVBCache.begin(); iter != sVBCache.end(); )
+            for (boost::unordered_map<U64, LLVBCache>::iterator iter = mVBCache.begin(); iter != mVBCache.end();)
             {
                 if (now - iter->second.touched > 1s)
                 {
-                    iter = sVBCache.erase(iter);
+                    iter = mVBCache.erase(iter);
                 }
                 else
                 {
@@ -1764,8 +1311,8 @@ LLVertexBuffer* LLRender::genBuffer(U32 attribute_mask, S32 count)
     // must already be bound. On Apple, the VBO is lazily created in
     // _unmapBuffer (LLAppleVBOPool); calling setBuffer() here would bind
     // mGLBuffer == 0 and then setupVertexBuffer would issue
-    // glVertexAttribIPointer with a non-null offset against no bound
-    // GL_ARRAY_BUFFER -> GL_INVALID_OPERATION in core profile.
+    // glVertexAttribPointer with a non-null offset against no bound
+    // GL_ARRAY_BUFFER — GL_INVALID_OPERATION in core profile.
     if (!gGLManager.mIsApple)
     {
         vb->setBuffer();
@@ -1784,7 +1331,7 @@ LLVertexBuffer* LLRender::genBuffer(U32 attribute_mask, S32 count)
     }
 
 #if LL_DARWIN
-    // unmapBuffer creates the GL buffer, uploads, and leaves it bound,
+    // unmapBuffer creates the GL buffer, uploads, and leaves it bound;
     // drawBuffer's later setBuffer() then runs setupVertexBuffer against
     // a valid VBO.
     vb->unmapBuffer();
@@ -2056,126 +1603,121 @@ void LLRender::diffuseColor4ub(U8 r, U8 g, U8 b, U8 a)
     }
 }
 
+void LLRender::setLineWidth(F32 width)
+{
+    gGL.flush();
+
+    width = llclamp(width, gGLManager.mAliasedLineRange[0], gGLManager.mAliasedLineRange[1]);
+    if(mLineWidth != width)
+    {
+        mLineWidth = width;
+        glLineWidth(width);
+    }
+}
+
+void LLRender::setPolygonOffset(F32 factor, F32 units)
+{
+    if (mPolygonOffsetFactor != factor || mPolygonOffsetUnits != units)
+    {
+        mPolygonOffsetFactor = factor;
+        mPolygonOffsetUnits = units;
+        flush();
+
+        const F32 sign = sReverseZ ? -1.f : 1.f;
+        glPolygonOffset(sign * factor, sign * units);
+    }
+}
+
+void LLRender::setPatchVertices(U32 count)
+{
+    if (mPatchVertices != count)
+    {
+        mPatchVertices = count;
+        flush();
+        glPatchParameteri(GL_PATCH_VERTICES, count);
+    }
+}
+
+void LLRender::rebasePolygonOffset()
+{
+    flush();
+
+    const F32 sign = sReverseZ ? -1.f : 1.f;
+    glPolygonOffset(sign * mPolygonOffsetFactor, sign * mPolygonOffsetUnits);
+}
 
 void LLRender::debugTexUnits(void)
 {
     LL_INFOS("TextureUnit") << "Active TexUnit: " << mCurrTextureUnitIndex << LL_ENDL;
     std::string active_enabled = "false";
-    for (U32 i = 0; i < mTexUnits.size(); i++)
+    for (U32 i = 0; i < mTextureSlots.size(); i++)
     {
-        if (getTexUnit(i)->mCurrTexType != LLTexUnit::TT_NONE)
+        if (getTextureSlot(i)->mCurrTexType != ALTextureSlot::TT_NONE)
         {
             if (i == mCurrTextureUnitIndex) active_enabled = "true";
             LL_INFOS("TextureUnit") << "TexUnit: " << i << " Enabled" << LL_ENDL;
             LL_INFOS("TextureUnit") << "Enabled As: " ;
-            switch (getTexUnit(i)->mCurrTexType)
+            switch (getTextureSlot(i)->mCurrTexType)
             {
-                case LLTexUnit::TT_TEXTURE:
+                case ALTextureSlot::TT_TEXTURE:
                     LL_CONT << "Texture 2D";
                     break;
-                case LLTexUnit::TT_RECT_TEXTURE:
+                case ALTextureSlot::TT_RECT_TEXTURE:
                     LL_CONT << "Texture Rectangle";
                     break;
-                case LLTexUnit::TT_CUBE_MAP:
+                case ALTextureSlot::TT_CUBE_MAP:
                     LL_CONT << "Cube Map";
                     break;
                 default:
                     LL_CONT << "ARGH!!! NONE!";
                     break;
             }
-            LL_CONT << ", Texture Bound: " << getTexUnit(i)->mCurrTexture << LL_ENDL;
+            LL_CONT << ", Texture Bound: " << getTextureSlot(i)->mCurrTexture << LL_ENDL;
         }
     }
     LL_INFOS("TextureUnit") << "Active TexUnit Enabled : " << active_enabled << LL_ENDL;
 }
 
-glm::mat4 get_current_modelview()
+LLMatrix4a al_reverse_z_transform(const LLMatrix4a& p)
 {
-    return glm::make_mat4(gGLModelView);
+    // z_ndc' = (1 - z_ndc)/2: the depth column becomes 0.5 * (w column - depth column),
+    // x, y and w untouched.
+    LLVector4a depth;
+    depth.setSub(p.getColumn<3>(), p.getColumn<2>());
+    depth.mul(0.5f);
+    LLMatrix4a r = p;
+    r.setColumn<2>(depth);
+    return r;
 }
 
-glm::mat4 get_current_projection()
+LLMatrix4a al_perspective(F32 fovy_rad, F32 aspect, F32 z_near, F32 z_far)
 {
-    return glm::make_mat4(gGLProjection);
+    const LLMatrix4a p = LLMatrix4a::perspective(fovy_rad, aspect, z_near, z_far);
+    return LLRender::sReverseZ ? al_reverse_z_transform(p) : p;
 }
 
-glm::mat4 get_last_modelview()
+LLMatrix4a al_ortho(F32 left, F32 right, F32 bottom, F32 top, F32 z_near, F32 z_far)
 {
-    return glm::make_mat4(gGLLastModelView);
+    const LLMatrix4a p = LLMatrix4a::ortho(left, right, bottom, top, z_near, z_far);
+    return LLRender::sReverseZ ? al_reverse_z_transform(p) : p;
 }
 
-glm::mat4 get_last_projection()
+LLVector4a al_project(const LLVector4a& obj, const LLMatrix4a& modelview, const LLMatrix4a& proj, const S32 viewport[4])
 {
-    return glm::make_mat4(gGLLastProjection);
+    // Under reverse-Z the projection already yields [0,1] window z, so the zero-to-one
+    // form does not re-apply the [-1,1]->[0,1] remap.
+    return LLRender::sReverseZ ? alprojection::project_zo(obj, modelview, proj, viewport)
+                               : alprojection::project(obj, modelview, proj, viewport);
 }
 
-void copy_matrix(const glm::mat4& src, F32* dst)
+LLVector4a al_unproject(const LLVector4a& win, const LLMatrix4a& modelview, const LLMatrix4a& proj, const S32 viewport[4])
 {
-    auto matp = glm::value_ptr(src);
-    for (U32 i = 0; i < 16; i++)
-    {
-        dst[i] = matp[i];
-    }
+    return LLRender::sReverseZ ? alprojection::unproject_zo(win, modelview, proj, viewport)
+                               : alprojection::unproject(win, modelview, proj, viewport);
 }
 
-void set_current_modelview(const glm::mat4& mat)
+LLVector4a al_unproject(const LLVector4a& win, const LLMatrix4a& inverse, const S32 viewport[4])
 {
-    copy_matrix(mat, gGLModelView);
-}
-
-void set_current_projection(const glm::mat4& mat)
-{
-    copy_matrix(mat, gGLProjection);
-}
-
-void set_last_modelview(const glm::mat4& mat)
-{
-    copy_matrix(mat, gGLLastModelView);
-}
-
-void set_last_projection(const glm::mat4& mat)
-{
-    copy_matrix(mat, gGLLastProjection);
-}
-
-glm::vec3 mul_mat4_vec3(const glm::mat4& mat, const glm::vec3& vec)
-{
-#if 1 // SIMD path results in strange crashes. Fall back to scalar for now.
-    const float w = vec[0] * mat[0][3] + vec[1] * mat[1][3] + vec[2] * mat[2][3] + mat[3][3];
-    return glm::vec3(
-       (vec[0] * mat[0][0] + vec[1] * mat[1][0] + vec[2] * mat[2][0] + mat[3][0]) / w,
-       (vec[0] * mat[0][1] + vec[1] * mat[1][1] + vec[2] * mat[2][1] + mat[3][1]) / w,
-       (vec[0] * mat[0][2] + vec[1] * mat[1][2] + vec[2] * mat[2][2] + mat[3][2]) / w
-    );
-#else
-    LLVector4a x, y, z, s, t, p, q;
-
-    x.splat(vec.x);
-    y.splat(vec.y);
-    z.splat(vec.z);
-
-    s.splat<3>(mat[0].data);
-    t.splat<3>(mat[1].data);
-    p.splat<3>(mat[2].data);
-    q.splat<3>(mat[3].data);
-
-    s.mul(x);
-    t.mul(y);
-    p.mul(z);
-    q.add(s);
-    t.add(p);
-    q.add(t);
-
-    x.mul(mat[0].data);
-    y.mul(mat[1].data);
-    z.mul(mat[2].data);
-
-    x.add(y);
-    z.add(mat[3].data);
-    LLVector4a res;
-    res.load3(glm::value_ptr(vec));
-    res.setAdd(x, z);
-    res.div(q);
-    return glm::make_vec3(res.getF32ptr());
-#endif
+    return LLRender::sReverseZ ? alprojection::unproject_zo(win, inverse, viewport)
+                               : alprojection::unproject(win, inverse, viewport);
 }

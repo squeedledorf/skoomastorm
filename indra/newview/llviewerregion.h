@@ -508,7 +508,7 @@ public:
     F32Bits mBitsReceived;
     F32     mPacketsReceived;
 
-    LLMatrix4 mRenderMatrix;
+    LLMatrix4a mRenderMatrix; // SKOOMA-PORT: LLMatrix4a, as Alchemy (applyModelMatrix)
 
     // These arrays are maintained in parallel. Ideally they'd be combined into a
     // single array of an aggrigate data type but for compatibility with the old

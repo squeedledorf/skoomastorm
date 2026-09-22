@@ -49,6 +49,7 @@
 #include "llviewertexture.h"
 #include "llworld.h"
 #include "pipeline.h"
+#include "ssglmcompat.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1938,14 +1939,13 @@ void SSSurfaceField::updateWindow()
 // Binds the field window texture.
 bool SSSurfaceField::bindForShader(LLGLSLShader& shader, S32 channel)
 {
-    // <SS:Nexii> Nothing upstream clamps the running channel count against the driver's actual unit budget - a shader with enough other samplers already bound could hand this an out-of-range unit, which is an out-of-bounds gGL.getTexUnit() index rather than merely "one fewer effect".
+    // <SS:Nexii> Nothing upstream clamps the running channel count against the driver's actual unit budget - a shader with enough other samplers already bound could hand this an out-of-range unit, which is an out-of-bounds gGL.getTextureSlot() index rather than merely "one fewer effect".
     if (!hasWindow() || channel < 0 || channel >= gGLManager.mNumTextureImageUnits) return false;
 
     static LLStaticHashedString field_map("ssFieldMap");
     static LLStaticHashedString field_origin("ssFieldOrigin");
 
-    gGL.getTexUnit(channel)->activate();
-    gGL.getTexUnit(channel)->bindManual(LLTexUnit::TT_TEXTURE, mWindowTex);
+    gGL.getTextureSlot(channel)->bindManual(ALTextureSlot::TT_TEXTURE, mWindowTex);
     shader.uniform1i(field_map, channel);
 
     shader.uniform4f(field_origin, mWindowOrigin.mV[VX], mWindowOrigin.mV[VY],
@@ -1960,8 +1960,7 @@ bool SSSurfaceField::bindFlowForShader(LLGLSLShader& shader, S32 channel)
 
     static LLStaticHashedString field_flow_map("ssFieldFlowMap");
 
-    gGL.getTexUnit(channel)->activate();
-    gGL.getTexUnit(channel)->bindManual(LLTexUnit::TT_TEXTURE, mWindowFlowTex);
+    gGL.getTextureSlot(channel)->bindManual(ALTextureSlot::TT_TEXTURE, mWindowFlowTex);
     shader.uniform1i(field_flow_map, channel);
 
     return true;
@@ -1974,8 +1973,7 @@ bool SSSurfaceField::bindStateForShader(LLGLSLShader& shader, S32 channel)
 
     static LLStaticHashedString field_state_map("ssFieldStateMap");
 
-    gGL.getTexUnit(channel)->activate();
-    gGL.getTexUnit(channel)->bindManual(LLTexUnit::TT_TEXTURE, mWindowStateTex);
+    gGL.getTextureSlot(channel)->bindManual(ALTextureSlot::TT_TEXTURE, mWindowStateTex);
     shader.uniform1i(field_state_map, channel);
 
     return true;
@@ -1988,8 +1986,7 @@ bool SSSurfaceField::bindCoverForShader(LLGLSLShader& shader, S32 channel)
 
     static LLStaticHashedString field_cover_map("ssFieldCoverMap");
 
-    gGL.getTexUnit(channel)->activate();
-    gGL.getTexUnit(channel)->bindManual(LLTexUnit::TT_TEXTURE, mWindowCoverTex);
+    gGL.getTextureSlot(channel)->bindManual(ALTextureSlot::TT_TEXTURE, mWindowCoverTex);
     shader.uniform1i(field_cover_map, channel);
 
     return true;
@@ -2347,9 +2344,9 @@ void SSSurfaceField::renderWetPass()
         gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     }
 
-    gGL.getTexUnit(field_channel)->unbind(LLTexUnit::TT_TEXTURE);
-    gGL.getTexUnit(wet_flow_channel)->unbind(LLTexUnit::TT_TEXTURE);
-    gGL.getTexUnit(wet_state_channel)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(field_channel)->unbind();
+    gGL.getTextureSlot(wet_flow_channel)->unbind();
+    gGL.getTextureSlot(wet_state_channel)->unbind();
     gPipeline.unbindDeferredShader(gSSSurfaceWetProgram);
 
     {
@@ -2442,8 +2439,8 @@ void SSSurfaceField::renderWetPass()
         if (wave_tex && wave_channel < gGLManager.mNumTextureImageUnits)
         {
             wave_tex->addTextureStats(1024.f * 1024.f);
-            gGL.getTexUnit(wave_channel)->activate();
-            gGL.getTexUnit(wave_channel)->bindManual(LLTexUnit::TT_TEXTURE, wave_tex->getTexName());
+            gGL.getTextureSlot(wave_channel)->bindManual(ALTextureSlot::TT_TEXTURE, wave_tex->getTexName(),
+                                                           gGL.getSampler(ALSamplers::AnisoWrap));
             gSSSurfaceNormalProgram.uniform1i(wave_map, wave_channel);
             have_wave = true;
         }
@@ -2519,10 +2516,10 @@ void SSSurfaceField::renderWetPass()
             gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
         }
 
-        gGL.getTexUnit(normal_field_channel)->unbind(LLTexUnit::TT_TEXTURE);
-        gGL.getTexUnit(flow_field_channel)->unbind(LLTexUnit::TT_TEXTURE);
-        if (have_wave) gGL.getTexUnit(wave_channel)->unbind(LLTexUnit::TT_TEXTURE);
-        gGL.getTexUnit(normal_state_channel)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(normal_field_channel)->unbind();
+        gGL.getTextureSlot(flow_field_channel)->unbind();
+        if (have_wave) gGL.getTextureSlot(wave_channel)->unbind();
+        gGL.getTextureSlot(normal_state_channel)->unbind();
         gPipeline.unbindDeferredShader(gSSSurfaceNormalProgram);
 
         {
@@ -2569,8 +2566,7 @@ void SSSurfaceField::renderWetPass()
     }
 
     gSSSurfaceCommitProgram.bind();
-    gGL.getTexUnit(0)->activate();
-    gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mScratch.getTexture(0));
+    mScratch.bindTexture(0, 0);
     gSSSurfaceCommitProgram.uniform1i(commit_src, 0);
     gSSSurfaceCommitProgram.uniform1f(commit_target, 1.f);
 
@@ -2624,7 +2620,7 @@ void SSSurfaceField::renderWetPass()
         LL_INFOS("AtmoMagic") << line.str() << LL_ENDL;
     }
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
     gSSSurfaceCommitProgram.unbind();
 
     if (do_normal && mScratchNormal.getNumTextures() >= 1)
@@ -2636,8 +2632,7 @@ void SSSurfaceField::renderWetPass()
         glDrawBuffers(4, normal_bufs);
 
         gSSSurfaceCommitProgram.bind();
-        gGL.getTexUnit(0)->activate();
-        gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mScratchNormal.getTexture(0));
+        mScratchNormal.bindTexture(0, 0);
         gSSSurfaceCommitProgram.uniform1i(commit_src, 0);
         gSSSurfaceCommitProgram.uniform1f(commit_target, 2.f);
         gSSSurfaceCommitProgram.uniform1f(commit_paint, 0.f);
@@ -2659,7 +2654,7 @@ void SSSurfaceField::renderWetPass()
             }
         }
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
         gSSSurfaceCommitProgram.unbind();
     }
 
@@ -2755,9 +2750,9 @@ void SSSurfaceField::renderAlbedoPass()
         gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     }
 
-    gGL.getTexUnit(field_channel)->unbind(LLTexUnit::TT_TEXTURE);
-    gGL.getTexUnit(albedo_flow_channel)->unbind(LLTexUnit::TT_TEXTURE);
-    gGL.getTexUnit(albedo_state_channel)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(field_channel)->unbind();
+    gGL.getTextureSlot(albedo_flow_channel)->unbind();
+    gGL.getTextureSlot(albedo_state_channel)->unbind();
     gPipeline.unbindDeferredShader(gSSSurfaceAlbedoProgram);
 
     mScratch.flush();
@@ -2769,8 +2764,7 @@ void SSSurfaceField::renderAlbedoPass()
     glDrawBuffers(4, albedo_bufs);
 
     gSSSurfaceCommitProgram.bind();
-    gGL.getTexUnit(0)->activate();
-    gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mScratch.getTexture(0));
+    mScratch.bindTexture(0, 0);
     static LLStaticHashedString snow_commit_src("ssCommitSource");
     static LLStaticHashedString snow_commit_target("ssCommitTarget");
     static LLStaticHashedString snow_commit_paint("ssCommitDebugPaint");
@@ -2786,7 +2780,7 @@ void SSSurfaceField::renderAlbedoPass()
         gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     }
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
     gSSSurfaceCommitProgram.unbind();
 
     const GLenum restore_bufs[4] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1,
@@ -2808,7 +2802,7 @@ void SSSurfaceField::renderDebug()
     LLGLEnable blend(GL_BLEND);
     LLGLDepthTest depth(GL_TRUE, GL_FALSE);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     const LLVector3 cam = LLViewerCamera::getInstance()->getOrigin();
     static LLCachedControl<F32> radius_setting(gSavedSettings, "SSAtmoSurfaceRadius", 64.f);
@@ -3126,7 +3120,7 @@ void SSSurfaceField::renderRunoffDebug()
     LLGLEnable blend(GL_BLEND);
     LLGLDepthTest depth(GL_TRUE, GL_FALSE);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTextureSlot(0)->unbind();
 
     if (view == 3)
     {
