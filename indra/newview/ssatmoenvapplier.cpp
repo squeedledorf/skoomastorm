@@ -464,6 +464,7 @@ void SSAtmoEnvApplier::activate()
 
     install();
     mActive = true;
+    LL_INFOS("AtmoMagicEnv") << "Atmo Magic environment applier active: driving the sky through ENV_LOCAL" << LL_ENDL;
 }
 
 // Pushes our settings objects into EEP's local slot.
@@ -481,6 +482,7 @@ void SSAtmoEnvApplier::install()
 // Releases ENV_LOCAL and restores whatever EEP had.
 void SSAtmoEnvApplier::deactivate()
 {
+    LL_INFOS("AtmoMagicEnv") << "Atmo Magic environment applier inactive: releasing ENV_LOCAL" << LL_ENDL;
     LLEnvironment::instance().clearEnvironment(LLEnvironment::ENV_LOCAL);
     LLEnvironment::instance().setSelectedEnvironment(LLEnvironment::ENV_LOCAL);
 

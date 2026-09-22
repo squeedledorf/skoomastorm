@@ -198,6 +198,18 @@ void SSHeightFog::render()
     if (dial <= 0.f && mGroundPart <= 0.004f && mPrecipPart <= 0.004f && mMistPart <= 0.004f) return;
 
     if (!gSSPostFogProgram.isComplete()) return;
+
+    // <OCOL> The volumetric mode replaces the flat veil when it is on and everything it needs
+    // is there; anything missing leaves the flat path exactly as it was, said once.
+    static LLCachedControl<bool> ocol_on(gSavedSettings, "OCOLHeightFog", false);
+    static LLCachedControl<F32> ocol_scale(gSavedSettings, "OCOLHeightFogScale", 0.5f);
+    bool volumetric = ocol_on;
+    if (volumetric && !(gOCOLHeightFogProgram.isComplete() && gOCOLHeightFogCompositeProgram.isComplete()))
+    {
+        LL_WARNS_ONCE("AtmoMagic") << "OCOL height fog shaders are not complete; flat height fog instead" << LL_ENDL;
+        volumetric = false;
+    }
+    // </OCOL>
     // <SS:Nexii> ground/precip/mist are weather-only terms and do not read the surface field; only squall and the drift band are column-gated, so the whole layer no longer bails out on a calm humid morning before any window has been built.
     const bool need_field = (mSquallPart > 0.004f) || (mLiftPart * dial > 0.004f);
     if (need_field && !SSSurfaceField::getInstance()->hasWindow()) return;
@@ -209,6 +221,16 @@ void SSHeightFog::render()
     const U32 h = screen.getHeight();
     if (w == 0 || h == 0) return;
     if (!ensureTarget(w, h)) return;
+    // <OCOL>
+    if (volumetric)
+    {
+        const F32 scale = llclamp((F32)ocol_scale, 0.25f, 1.f);
+        if (!ensureOCOLTarget(llmax((U32)(w * scale), 1U), llmax((U32)(h * scale), 1U)))
+        {
+            volumetric = false;
+        }
+    }
+    // </OCOL>
 
     LL_PROFILE_GPU_ZONE("atmo height fog");
 
@@ -256,14 +278,25 @@ void SSHeightFog::render()
     // add_common_permutations, isDeferred set for the automatic matrix sync only) - bound
     // directly, not through LLPipeline::bindDeferredShader, so every uniform beyond that
     // automatic sync (inv_proj) is uploaded here by hand.
-    gSSPostFogProgram.bind();
-    gSSPostFogProgram.bindDepthTexture(LLShaderMgr::DEFERRED_DEPTH, &mDepthCopy, ALSamplers::BilinearClamp);
-    gSSPostFogProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)w, (GLfloat)h);
+    // <OCOL> Both paths read the same uniforms, uploaded once below to whichever program is
+    // drawing. The march draws into its own target first (point-clamped depth there and in the
+    // composite, never filtered - a filtered read against a point read drew dark rims); the
+    // flat veil draws straight onto the screen as before.
+    LLGLSLShader& shader = volumetric ? gOCOLHeightFogProgram : gSSPostFogProgram;
+    if (volumetric)
+    {
+        screen.flush();
+        mOCOLTarget.bindTarget();
+    }
+    // </OCOL>
+    shader.bind();
+    shader.bindDepthTexture(LLShaderMgr::DEFERRED_DEPTH, &mDepthCopy, volumetric ? ALSamplers::PointClamp : ALSamplers::BilinearClamp);
+    shader.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)w, (GLfloat)h);
 
     // The surface field window - the same column lookup the exposure march and the wet/snow
     // passes read.
-    const S32 field_channel = gSSPostFogProgram.mActiveTextureChannels;
-    const bool field_bound = SSSurfaceField::getInstance()->bindForShader(gSSPostFogProgram, field_channel);
+    const S32 field_channel = shader.mActiveTextureChannels;
+    const bool field_bound = SSSurfaceField::getInstance()->bindForShader(shader, field_channel);
     // <SS:Nexii> The cover window rides one channel up: the world field's enclosure spectrum
     // per cell, which grades the march's covered branch. Validity is shared with the field
     // window (same updateWindow fill), so the two binds succeed or fail together; when neither
@@ -271,13 +304,13 @@ void SSHeightFog::render()
     // covered test.
     if (field_bound)
     {
-        SSSurfaceField::getInstance()->bindCoverForShader(gSSPostFogProgram, field_channel + 1);
+        SSSurfaceField::getInstance()->bindCoverForShader(shader, field_channel + 1);
     }
     if (!field_bound)
     {
         // <SS:Nexii> No window this frame - force ssFieldFetch's out-of-window sentinel so the march falls back to ssFogGroundZ instead of reading a stale or default-zero origin.
         static LLStaticHashedString field_origin("ssFieldOrigin");
-        gSSPostFogProgram.uniform4f(field_origin, 1.0e7f, 1.0e7f, 1.f, 1.f);
+        shader.uniform4f(field_origin, 1.0e7f, 1.0e7f, 1.f, 1.f);
     }
 
     static LLStaticHashedString inv_view("ssFieldInvView");
@@ -300,7 +333,7 @@ void SSHeightFog::render()
     static LLStaticHashedString fog_debug("ssFogDebug");
 
     const glm::mat4 inv = glm::inverse(get_current_modelview());
-    gSSPostFogProgram.uniformMatrix4fv(inv_view, 1, GL_FALSE, glm::value_ptr(inv));
+    shader.uniformMatrix4fv(inv_view, 1, GL_FALSE, glm::value_ptr(inv));
 
     static LLCachedControl<F32> band(gSavedSettings, "SSAtmoWhiteoutBand", 2.5f);
     static LLCachedControl<F32> range(gSavedSettings, "SSAtmoWhiteoutRange", 48.f);
@@ -320,25 +353,25 @@ void SSHeightFog::render()
         sun_dir = sky->getLightDirection();
     }
 
-    gSSPostFogProgram.uniform3fv(fog_color, 1, mFogColor.mV);
-    gSSPostFogProgram.uniform3fv(fog_suncolor, 1, sun_color.mV);
-    gSSPostFogProgram.uniform3fv(fog_sundir, 1, sun_dir.mV);
-    gSSPostFogProgram.uniform1f(fog_ground, mGroundPart);
-    gSSPostFogProgram.uniform1f(fog_precip, mPrecipPart);
-    gSSPostFogProgram.uniform1f(fog_squall, mSquallPart * dial);
-    gSSPostFogProgram.uniform1f(fog_squallscale, squall_scale_m);
-    gSSPostFogProgram.uniform1f(fog_lift, mLiftPart * dial);
-    gSSPostFogProgram.uniform1f(fog_band, band_m);
-    gSSPostFogProgram.uniform1f(fog_mist, mMistPart);
-    gSSPostFogProgram.uniform1f(fog_range, range_m);
-    gSSPostFogProgram.uniform1f(fog_groundz, atmo->groundZero());
+    shader.uniform3fv(fog_color, 1, mFogColor.mV);
+    shader.uniform3fv(fog_suncolor, 1, sun_color.mV);
+    shader.uniform3fv(fog_sundir, 1, sun_dir.mV);
+    shader.uniform1f(fog_ground, mGroundPart);
+    shader.uniform1f(fog_precip, mPrecipPart);
+    shader.uniform1f(fog_squall, mSquallPart * dial);
+    shader.uniform1f(fog_squallscale, squall_scale_m);
+    shader.uniform1f(fog_lift, mLiftPart * dial);
+    shader.uniform1f(fog_band, band_m);
+    shader.uniform1f(fog_mist, mMistPart);
+    shader.uniform1f(fog_range, range_m);
+    shader.uniform1f(fog_groundz, atmo->groundZero());
 
     // The water plane, and what looking up shows: the veil at the camera's own column, faded by
     // the same bottom-to-top falloff, zeroed when the camera is sheltered.
     const LLVector3 cam = LLViewerCamera::getInstance()->getOrigin();
     LLViewerRegion* cam_region = LLWorld::getInstance()->getRegionFromPosAgent(cam);
     const F32 water_z = cam_region ? cam_region->getWaterHeight() : SSAtmoMagic::voidWaterHeight();
-    gSSPostFogProgram.uniform1f(fog_waterz, water_z);
+    shader.uniform1f(fog_waterz, water_z);
 
     F32 column_top = 0.f;
     const bool cam_column = SSWindFlowMap::getInstance()->surfaceAt(cam, column_top);
@@ -356,24 +389,29 @@ void SSHeightFog::render()
     // <SS:Nexii> fogDensityAt has no mist parameter of its own - the shader's mist_term rides the ground term's own scale height exactly (SS_FOG_GROUND_SCALE_M == FOG_GROUND_SCALE_M, ssPostFogF.glsl:68-69), so folding mMistPart into the ground argument here reproduces it exactly instead of leaving the sky veil mist-blind while the marched ground fog is not.
     const F32 sky_density = SSScreenFX::fogDensityAt(cam_above, mGroundPart + mMistPart, mPrecipPart, mSquallPart * dial, squall_scale_m, mLiftPart * dial, band_m)
                           * sky_open;
-    gSSPostFogProgram.uniform1f(fog_skydensity, sky_density);
+    shader.uniform1f(fog_skydensity, sky_density);
 
     const LLVector3 wind = SSWindFlowMap::getInstance()->sample(cam);
-    gSSPostFogProgram.uniform3fv(fog_wind, 1, wind.mV);
-    gSSPostFogProgram.uniform1f(fog_time, (F32)gFrameTimeSeconds);
+    shader.uniform3fv(fog_wind, 1, wind.mV);
+    shader.uniform1f(fog_time, (F32)gFrameTimeSeconds);
 
     static LLCachedControl<S32> debug_view(gSavedSettings, "SSAtmoHeightFogDebug", 0);
-    gSSPostFogProgram.uniform1f(fog_debug, (F32)llclamp((S32)debug_view, 0, 2));
+    shader.uniform1f(fog_debug, (F32)llclamp((S32)debug_view, 0, 2));
 
+    if (volumetric)
+    {
+        renderOCOL(shader, wind); // <OCOL>
+    }
+    else
     {
         LLGLDepthTest depth(GL_FALSE);
         gPipeline.mScreenTriangleVB->setBuffer();
         gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-    }
 
-    // <SS:Nexii> unbind() does not unbind textures - the depth copy would otherwise stay bound on this unit while mDepthCopy becomes the draw FBO again next frame (L11, weaker version of the guard at :232-238 above).
-    gSSPostFogProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
-    gSSPostFogProgram.unbind();
+        // <SS:Nexii> unbind() does not unbind textures - the depth copy would otherwise stay bound on this unit while mDepthCopy becomes the draw FBO again next frame (L11, weaker version of the guard at :232-238 above).
+        shader.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
+        shader.unbind();
+    }
 
     // <SS:Nexii> Matches the bindTarget() above (B2) - screen must be flushed before renderFinalize's later passes bind/flush their own targets, or the present at the end of renderFinalize draws into screen instead of the back buffer.
     screen.flush();
@@ -381,7 +419,104 @@ void SSHeightFog::render()
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
 }
 
+// <OCOL>
+bool SSHeightFog::ensureOCOLTarget(U32 w, U32 h)
+{
+    if (mOCOLTarget.getWidth() == w && mOCOLTarget.getHeight() == h && mOCOLTarget.isComplete())
+    {
+        return true;
+    }
+
+    mOCOLTarget.release();
+    // Storage is immutable, so the format has to be sized; half floats because the march
+    // writes linear HDR in-scatter, and no depth - the composite reads the screen's copy.
+    if (!mOCOLTarget.allocate(w, h, GL_RGBA16F))
+    {
+        LL_WARNS_ONCE("AtmoMagic") << "OCOL height fog target failed to allocate;"
+                                      " flat height fog instead" << LL_ENDL;
+        mOCOLTarget.release();
+        return false;
+    }
+    return true;
+}
+
+// The march into mOCOLTarget, then the composite onto the screen. On entry the march program
+// is bound with mOCOLTarget as the draw target and every Atmo uniform uploaded; this adds only
+// what the volumetric shape needs - the shadow maps for the shafts, the step count, and the
+// bank noise's two drift offsets, which are Atmo's wind times time exactly as the wisp's are,
+// wrapped to the noise tile in double precision so the shader only ever sees small numbers
+// (LOCKSTEP OCOL_FOG_FEATURE_M * OCOL_FOG_TILE_CELLS, ocolHeightFogF.glsl).
+void SSHeightFog::renderOCOL(LLGLSLShader& shader, const LLVector3& wind)
+{
+    static LLCachedControl<S32> ocol_steps(gSavedSettings, "OCOLHeightFogSteps", 32);
+    static LLCachedControl<bool> ocol_shafts(gSavedSettings, "OCOLHeightFogShafts", true);
+    static LLCachedControl<S32> debug_view(gSavedSettings, "SSAtmoHeightFogDebug", 0);
+
+    static LLStaticHashedString fog_steps("ocolFogSteps");
+    static LLStaticHashedString fog_shafts("ocolFogShafts");
+    static LLStaticHashedString fog_drift0("ocolFogDrift0");
+    static LLStaticHashedString fog_drift1("ocolFogDrift1");
+    static LLStaticHashedString fog_res("ocolFogRes");
+    static LLStaticHashedString fog_debug("ssFogDebug");
+
+    const F64 tile = 64.0 * 64.0;
+    auto wrap = [tile](F64 v) { F64 r = fmod(v, tile); return (F32)(r < 0.0 ? r + tile : r); };
+    const F64 now = (F64)(F32)gFrameTimeSeconds;
+    const F32 drift0[3] = { wrap(-wind.mV[VX] * now), wrap(-wind.mV[VY] * now), wrap(-wind.mV[VZ] * now) };
+    const F32 drift1[3] = { wrap(-wind.mV[VX] * now * 1.7), wrap(-wind.mV[VY] * now * 1.7), wrap(-wind.mV[VZ] * now * 1.7 + now * 0.15) };
+
+    // 1. The march. The shafts read the sun shadow maps through shadowUtil.glsl, which wants
+    // the shared shadow block, the maps, and the light direction it selects by sun_up_factor -
+    // the pieces of bindDeferredShader a directly-bound post program has to do for itself.
+    {
+        LLGLDisable no_blend(GL_BLEND);
+        LLGLDepthTest depth(GL_FALSE);
+
+        gPipeline.bindDeferredUBO();
+        gPipeline.bindShadowMaps(shader);
+        shader.uniform3fv(LLShaderMgr::DEFERRED_SUN_DIR, 1, gPipeline.mTransformedSunDir.mV);
+        shader.uniform3fv(LLShaderMgr::DEFERRED_MOON_DIR, 1, gPipeline.mTransformedMoonDir.mV);
+        shader.uniform1i(LLShaderMgr::SUN_UP_FACTOR, LLEnvironment::instance().getIsSunUp() ? 1 : 0);
+
+        shader.uniform1i(fog_steps, llclamp((S32)ocol_steps, 4, 128));
+        shader.uniform1i(fog_shafts, ocol_shafts ? 1 : 0);
+        shader.uniform3fv(fog_drift0, 1, drift0);
+        shader.uniform3fv(fog_drift1, 1, drift1);
+
+        gPipeline.mScreenTriangleVB->setBuffer();
+        gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+
+        gPipeline.unbindShadowMaps();
+        shader.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
+        shader.unbind();
+    }
+
+    mOCOLTarget.flush();
+    gPipeline.mRT->screen.bindTarget();
+
+    // 2. The composite, under the blend render() set up (inscatter added, the scene times
+    // the transmittance) - the same contract the flat veil draws with.
+    {
+        LLGLDepthTest depth(GL_FALSE);
+
+        gOCOLHeightFogCompositeProgram.bind();
+        gOCOLHeightFogCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mOCOLTarget, ALSamplers::PointClamp);
+        gOCOLHeightFogCompositeProgram.bindDepthTexture(LLShaderMgr::DEFERRED_DEPTH, &mDepthCopy, ALSamplers::PointClamp);
+        gOCOLHeightFogCompositeProgram.uniform2f(fog_res, (GLfloat)mOCOLTarget.getWidth(), (GLfloat)mOCOLTarget.getHeight());
+        gOCOLHeightFogCompositeProgram.uniform1f(fog_debug, (F32)llclamp((S32)debug_view, 0, 2));
+
+        gPipeline.mScreenTriangleVB->setBuffer();
+        gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+
+        gOCOLHeightFogCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE);
+        gOCOLHeightFogCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
+        gOCOLHeightFogCompositeProgram.unbind();
+    }
+}
+// </OCOL>
+
 void SSHeightFog::releaseGL()
 {
     mDepthCopy.release();
+    mOCOLTarget.release(); // <OCOL>
 }

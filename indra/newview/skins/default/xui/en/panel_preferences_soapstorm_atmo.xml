@@ -286,6 +286,17 @@
      top_pad="4"
      width="500" />
     <check_box
+     control_name="OCOLHeightFog"
+     follows="left|top"
+     height="16"
+     label="Volumetric fog (OCOL)"
+     layout="topleft"
+     left="30"
+     name="atmo_ocolfog_prefs"
+     tool_tip="Draws the height fog layer as wispy 3D banks with sun shafts instead of the flat veil - same weather, same interior gate, same wind and colours, marched at half resolution. Off is the flat veil."
+     top_pad="4"
+     width="480" />
+    <check_box
      control_name="SSAtmoHeatShimmer"
      follows="left|top"
      height="16"

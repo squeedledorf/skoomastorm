@@ -2011,6 +2011,8 @@ bool SSAtmoEnvManager::adoptParsedAsset(const LLSD& sd)
     mWorking = parsed_asset;
     mHasAsset = true;
     mStatus = "Ready.";
+    LL_INFOS("AtmoMagicEnv") << "Atmo v3 environment adopted: " << mWorking.mTracks.size() << " track(s), source "
+                             << mAssetID << (mFromParcel ? " (parcel)" : "") << LL_ENDL;
     // The environment's own precipitation types have to be live before anything resolves one.
     ssAtmoEnvStagePrecipTypes(mWorking);
     return true;

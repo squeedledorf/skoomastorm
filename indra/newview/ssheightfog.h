@@ -60,6 +60,15 @@ public:
 
     void releaseGL();
 
+    // <OCOL> The volumetric mode: OCOL's mist marcher on Atmo's density, into a reduced-
+    // resolution target, then a depth-aware upsample onto the screen with the flat path's
+    // blend. Chosen by OCOLHeightFog; falls back to the flat path when its shaders or target
+    // are not there. Called by render() with the fog uniforms already uploaded to the march
+    // program; returns with screen bound again.
+    void renderOCOL(LLGLSLShader& shader, const LLVector3& wind);
+    bool ensureOCOLTarget(U32 w, U32 h);
+    // </OCOL>
+
     F32 intensity() const { return llmax(mSquallPart, llmax(mLiftPart, llmax(mGroundPart, llmax(mPrecipPart, mMistPart)))); }
     F32 squallPart() const { return mSquallPart; }
     F32 liftPart() const { return mLiftPart; }
@@ -84,6 +93,7 @@ private:
     LLColor3 mFogColor{1.f, 1.f, 1.f};   // smoothed toward the sky's horizon colour, luminance-floored
 
     LLRenderTarget mDepthCopy;  // the screen's depth, staged for the veil shader
+    LLRenderTarget mOCOLTarget; // <OCOL> the volumetric march, at OCOLHeightFogScale of the screen
 };
 
 #endif

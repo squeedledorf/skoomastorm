@@ -229,6 +229,10 @@ LLGLSLShader            gSSSurfaceCommitProgram;
 LLGLSLShader            gSSSurfaceAlbedoProgram; // <SS:Nexii> was gSSSurfaceSnowProgram
 // <SS:Nexii> Atmo Magic surface weather: post-processing screen-space layers (replace the old whiteout)
 LLGLSLShader            gSSPostFogProgram;
+// <OCOL> volumetric mode of the height fog layer
+LLGLSLShader            gOCOLHeightFogProgram;
+LLGLSLShader            gOCOLHeightFogCompositeProgram;
+// </OCOL>
 LLGLSLShader            gSSPostHeatProgram;
 LLGLSLShader            gSSPostLensProgram;
 LLGLSLShader            gSSInfoLookProgram;
@@ -1469,6 +1473,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gSSSurfaceCommitProgram.unload();
         gSSSurfaceAlbedoProgram.unload();
         gSSPostFogProgram.unload();
+        gOCOLHeightFogProgram.unload(); // <OCOL>
+        gOCOLHeightFogCompositeProgram.unload(); // <OCOL>
         gSSPostHeatProgram.unload();
         gSSPostLensProgram.unload();
         gSSInfoLookProgram.unload();
@@ -3675,6 +3681,54 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             gSSPostFogProgram.unload();
         }
     }
+
+    // <OCOL> The height fog layer's volumetric mode: OCOL's mist marcher on Atmo's density.
+    // Registered exactly like gSSPostFogProgram (a post program bound directly, the surface
+    // field include for the column gate) plus the sun shadow maps for the shafts - hasShadows
+    // links shadowUtil.glsl, HAS_SUN_SHADOW is the program's own gate on the lookup, the way
+    // gSSPrecipLitProgram has it. Optional: a failure only leaves the flat path.
+    if (success)
+    {
+        gOCOLHeightFogProgram.mName = "OCOL Height Fog Shader";
+        gOCOLHeightFogProgram.mFeatures.isDeferred = true;
+        gOCOLHeightFogProgram.mFeatures.hasShadows = use_sun_shadow;
+        gOCOLHeightFogProgram.mShaderFiles.clear();
+        gOCOLHeightFogProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
+        gOCOLHeightFogProgram.mShaderFiles.push_back(make_pair("deferred/ssSurfaceFieldF.glsl", GL_FRAGMENT_SHADER));
+        gOCOLHeightFogProgram.mShaderFiles.push_back(make_pair("deferred/ocolHeightFogF.glsl", GL_FRAGMENT_SHADER));
+        gOCOLHeightFogProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        gOCOLHeightFogProgram.clearPermutations();
+        if (use_sun_shadow)
+        {
+            gOCOLHeightFogProgram.addPermutation("HAS_SUN_SHADOW", "1");
+        }
+        add_common_permutations(&gOCOLHeightFogProgram);
+        if (!gOCOLHeightFogProgram.createShader())
+        {
+            LL_WARNS("Shader") << "OCOL Height Fog shader failed to compile;"
+                               << " height fog stays on the flat path" << LL_ENDL;
+            gOCOLHeightFogProgram.unload();
+        }
+    }
+
+    if (success)
+    {
+        gOCOLHeightFogCompositeProgram.mName = "OCOL Height Fog Composite Shader";
+        gOCOLHeightFogCompositeProgram.mFeatures.isDeferred = true;
+        gOCOLHeightFogCompositeProgram.mShaderFiles.clear();
+        gOCOLHeightFogCompositeProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
+        gOCOLHeightFogCompositeProgram.mShaderFiles.push_back(make_pair("deferred/ocolHeightFogCompositeF.glsl", GL_FRAGMENT_SHADER));
+        gOCOLHeightFogCompositeProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        gOCOLHeightFogCompositeProgram.clearPermutations();
+        add_common_permutations(&gOCOLHeightFogCompositeProgram);
+        if (!gOCOLHeightFogCompositeProgram.createShader())
+        {
+            LL_WARNS("Shader") << "OCOL Height Fog composite shader failed to compile;"
+                               << " height fog stays on the flat path" << LL_ENDL;
+            gOCOLHeightFogCompositeProgram.unload();
+        }
+    }
+    // </OCOL>
 
     // <SS:Nexii> Atmo Magic surface weather: the heat-shimmer post pass.
     if (success)

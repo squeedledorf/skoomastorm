@@ -251,6 +251,10 @@ extern LLGLSLShader         gSSSurfaceCommitProgram;
 extern LLGLSLShader         gSSSurfaceAlbedoProgram; // <SS:Nexii> was gSSSurfaceSnowProgram; renamed for the albedo pass (doc/atmo_magic_surface_weather.md sec 3)
 // <SS:Nexii> Atmo Magic surface weather: post-processing screen-space layers (replace the old whiteout)
 extern LLGLSLShader         gSSPostFogProgram;
+// <OCOL> volumetric mode of the height fog layer: the reduced-resolution march and its depth-aware upsample
+extern LLGLSLShader         gOCOLHeightFogProgram;
+extern LLGLSLShader         gOCOLHeightFogCompositeProgram;
+// </OCOL>
 extern LLGLSLShader         gSSPostHeatProgram;
 extern LLGLSLShader         gSSPostLensProgram;
 extern LLGLSLShader         gSSInfoLookProgram;
