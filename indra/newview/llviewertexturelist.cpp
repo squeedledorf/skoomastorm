@@ -648,7 +648,7 @@ LLViewerFetchedTexture* LLViewerTextureList::getImage(const LLUUID &image_id,
 
 // Builds a texture for getImage to insert; the caller owns the reference and
 // the table entry, so this touches neither.
-LLViewerFetchedTexture* LLViewerTextureList::createImage(const LLUUID &image_id,
+LLPointer<LLViewerFetchedTexture> LLViewerTextureList::createImage(const LLUUID &image_id,
                                                    FTType f_type,
                                                    bool usemipmaps,
                                                    LLViewerTexture::EBoostLevel boost_priority,

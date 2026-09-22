@@ -212,7 +212,9 @@ private:    // PoundLife - Improved Object Inspect
     LLImageRaw* getRawImageFromMemory(const U8* data, U32 size, std::string_view mimetype);
     LLViewerFetchedTexture* getImageFromMemory(const U8* data, U32 size, std::string_view mimetype);
 
-    LLViewerFetchedTexture* createImage(const LLUUID &image_id,
+    // Returns the owning reference: nothing else may hold one yet (a sculpt or BC7-known texture
+    // skips the fast-cache list), so a raw pointer here would dangle as soon as this returned.
+    LLPointer<LLViewerFetchedTexture> createImage(const LLUUID &image_id,
                                      FTType f_type,
                                      bool usemipmap = true,
                                      LLViewerTexture::EBoostLevel boost_priority = LLGLTexture::BOOST_NONE,     // Get the requested level immediately upon creation.
