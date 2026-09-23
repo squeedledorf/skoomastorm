@@ -33969,6 +33969,72 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Value</key>
     <integer>1</integer>
   </map>
+  <key>DebugShowShadowCache</key>
+  <map>
+    <key>Comment</key>
+    <string>Show the sun shadow cache's live state per cascade: validity, dirt, age, box size, texel size and refresh counts.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>0</integer>
+  </map>
+  <key>RenderShadowCache</key>
+  <map>
+    <key>Comment</key>
+    <string>Keep each sun shadow cascade's static depth between frames and redraw only avatars and moving objects every frame. Cascades become orthographic boxes padded by RenderShadowCachePad.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <boolean>1</boolean>
+  </map>
+  <key>RenderShadowCachePad</key>
+  <map>
+    <key>Comment</key>
+    <string>How far past its slice a cached cascade box reaches, as a fraction of the slice size on each side. Larger survives more camera motion before a refresh. The sun shadow maps grow by 1+2*pad per axis to keep the texel size, and each cascade keeps a cache of the same size, so sun shadow memory is about (1+2*pad)^2 * 2 times the uncached figure.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>0.25</real>
+  </map>
+  <key>RenderShadowCacheMaxAge</key>
+  <map>
+    <key>Comment</key>
+    <string>Seconds a cached cascade may go without a refresh, the safety net for changes nothing reports (a late texture on a masked caster, a terrain edit).</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>2.0</real>
+  </map>
+  <key>RenderShadowCacheSunAngle</key>
+  <map>
+    <key>Comment</key>
+    <string>Degrees the sun may move before a cached cascade refreshes (one cascade per frame). Floor 0.05: below that float rounding would refresh every frame.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>0.05</real>
+  </map>
+  <key>RenderShadowCacheMinInterval</key>
+  <map>
+    <key>Comment</key>
+    <string>Fewest frames between refreshes of one cascade for reported static changes; refreshes forced by the camera leaving the box happen at once.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>S32</string>
+    <key>Value</key>
+    <integer>6</integer>
+  </map>
   <key>RenderShadowCullMode</key>
   <map>
     <key>Comment</key>

@@ -326,7 +326,20 @@ public:
     void rebuildGeom();
     void rebuildMesh();
 
-    void setState(U32 state)       {mState |= state;}
+    // <SS:ShadowCache> the bounds at the moment the group first went dirty, so the rebuild can
+    // tell a LOD or texture rebuild (same footprint, nothing for the cache) from an object that
+    // appeared, left or moved.
+    void setState(U32 state)
+    {
+        if ((state & GEOM_DIRTY) && !(mState & GEOM_DIRTY))
+        {
+            mShadowDirtyBounds[0] = mObjectBounds[0];
+            mShadowDirtyBounds[1] = mObjectBounds[1];
+        }
+        mState |= state;
+    }
+    void noteStaticShadowChange(); // <SS:ShadowCache> after a rebuild: tell the sun shadow cache if the footprint changed
+    LLVector4a mShadowDirtyBounds[2] = { LLVector4a::getZero(), LLVector4a::getZero() };
     void dirtyGeom() { setState(GEOM_DIRTY); }
     void dirtyMesh() { setState(MESH_DIRTY); }
 

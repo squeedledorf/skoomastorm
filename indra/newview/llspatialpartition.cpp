@@ -331,7 +331,12 @@ void LLSpatialGroup::rebuildGeom()
 {
     if (!isDead())
     {
+        const bool was_dirty = hasState(LLSpatialGroup::GEOM_DIRTY); // <SS:ShadowCache>
         getSpatialPartition()->rebuildGeom(this);
+        if (was_dirty)
+        {
+            noteStaticShadowChange(); // <SS:ShadowCache> the bounds after a real rebuild, whichever partition did it
+        }
 
         if (hasState(LLSpatialGroup::MESH_DIRTY))
         {
@@ -528,6 +533,40 @@ void LLSpatialGroup::setState(U32 state, S32 mode)
     else
     {
         mState |= state;
+    }
+
+}
+
+// <SS:ShadowCache> A static group just rebuilt. If its footprint is what it was when it went
+// dirty, this was a LOD or texture rebuild and the cached depth still holds; the age refresh
+// covers the rare edit that keeps its bounds. Otherwise something appeared, left or moved, and
+// both the old and the new footprint have to be redrawn. Only the partitions the cache holds
+// count; movers draw every frame and particles never cast.
+void LLSpatialGroup::noteStaticShadowChange()
+{
+    LLSpatialPartition* part = getSpatialPartition();
+    if (!part || part->isBridge() || !LLPipeline::isStaticShadowPartition(part->mPartitionType))
+    {
+        return;
+    }
+    const LLVector4a& c = mObjectBounds[0];
+    const LLVector4a& h = mObjectBounds[1];
+    const LLVector4a& oc = mShadowDirtyBounds[0];
+    const LLVector4a& oh = mShadowDirtyBounds[1];
+    LLVector4a dc, dh;
+    dc.setSub(c, oc);
+    dh.setSub(h, oh);
+    if (dc.getLength3().getF32() < 0.05f && dh.getLength3().getF32() < 0.05f)
+    {
+        return; // same footprint
+    }
+    if (!oh.equals3(LLVector4a::getZero()))
+    {
+        gPipeline.shadowCacheNoteStaticChange(oc, oh, part->mPartitionType);
+    }
+    if (!h.equals3(LLVector4a::getZero()))
+    {
+        gPipeline.shadowCacheNoteStaticChange(c, h, part->mPartitionType);
     }
 }
 

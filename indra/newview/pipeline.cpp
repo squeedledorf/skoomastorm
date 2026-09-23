@@ -1194,8 +1194,21 @@ bool LLPipeline::allocateShadowBuffer(U32 resX, U32 resY)
         // coarser shadows in it.
         resX = resY = mReflectionMapManager.mProbeResolution * 4;
     }
-    U32 sun_shadow_map_width = BlurHappySize(resX, scale);
-    U32 sun_shadow_map_height = BlurHappySize(resY, scale);
+    // <SS:ShadowCache> the cached cascades cover a box padded by RenderShadowCachePad on
+    // every side, so the map grows by the same factor and a texel stays the size it was.
+    static LLCachedControl<bool> shadow_cache(gSavedSettings, "RenderShadowCache", true);
+    static LLCachedControl<F32> shadow_cache_pad(gSavedSettings, "RenderShadowCachePad", 0.25f);
+    F32 sun_scale = scale; // the spot maps keep the plain scale
+    if (shadow_cache && !gCubeSnapshot && mRT == &mMainRT)
+    {
+        sun_scale *= 1.f + 2.f * llclamp((F32)shadow_cache_pad, 0.02f, 1.f);
+    }
+    if (mRT == &mMainRT)
+    {   // any reallocation voids the cached depth, the cache being toggled included
+        releaseShadowCache();
+    }
+    U32 sun_shadow_map_width = BlurHappySize(resX, sun_scale);
+    U32 sun_shadow_map_height = BlurHappySize(resY, sun_scale);
 
     // 32-bit float depth is the same 4 bytes/texel as DEPTH24 here but distributes precision
     // differently (float, denser near the near plane). Opt-in; toggling it re-runs this via
@@ -1526,6 +1539,7 @@ void LLPipeline::releaseShadowBuffers()
     release_sun_shadows(mMainRT);
     release_sun_shadows(mAuxillaryRT);
     release_sun_shadows(mHeroProbeRT);
+    releaseShadowCache(); // <SS:ShadowCache>
 
     releaseSpotShadowTargets();
 }
@@ -3095,12 +3109,17 @@ bool LLPipeline::visibleObjectsInFrustum(LLCamera& camera)
     return false;
 }
 
-bool LLPipeline::getVisibleExtents(LLCamera& camera, LLVector3& min, LLVector3& max)
+bool LLPipeline::getVisibleExtents(LLCamera& camera, LLVector3& min, LLVector3& max, LLVector3* smin, LLVector3* smax)
 {
     const F32 X = 65536.f;
 
     min = LLVector3(X,X,X);
     max = LLVector3(-X,-X,-X);
+    if (smin && smax)
+    {
+        *smin = min;
+        *smax = max;
+    }
 
     LLViewerCamera::eCameraID saved_camera_id = LLViewerCamera::sCurCameraID;
     LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
@@ -3119,9 +3138,24 @@ bool LLPipeline::getVisibleExtents(LLCamera& camera, LLVector3& min, LLVector3& 
             {
                 if (hasRenderType(part->mDrawableType))
                 {
-                    if (!part->getVisibleExtents(camera, min, max))
+                    // <SS:ShadowCache> one walk, two boxes: the partition's own extents
+                    // merge into the full box, and into the static box unless it holds movers.
+                    LLVector3 pmin(X, X, X);
+                    LLVector3 pmax(-X, -X, -X);
+                    if (!part->getVisibleExtents(camera, pmin, pmax))
                     {
                         res = false;
+                    }
+                    if (pmin.mV[0] <= pmax.mV[0])
+                    {
+                        update_min_max(min, max, pmin);
+                        update_min_max(min, max, pmax);
+                        const bool mover = (i == LLViewerRegion::PARTITION_BRIDGE || i == LLViewerRegion::PARTITION_AVATAR || i == LLViewerRegion::PARTITION_CONTROL_AV);
+                        if (smin && smax && !mover)
+                        {
+                            update_min_max(*smin, *smax, pmin);
+                            update_min_max(*smin, *smax, pmax);
+                        }
                     }
                 }
             }
@@ -3191,7 +3225,7 @@ void LLPipeline::updateReverseZ()
     }
 }
 
-void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_attachments)
+void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_attachments, EShadowCullFilter filter)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE; //LL_RECORD_BLOCK_TIME(FTM_CULL);
     LL_PROFILE_GPU_ZONE("updateCull"); // should always be zero GPU time, but drop a timer to flush stuff out
@@ -3238,7 +3272,11 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
         {
             LLSpatialPartition* part = region->getSpatialPartition(i);
-            if (part)
+            // <SS:ShadowCache> the cached static pass walks only the partitions it caches,
+            // the per-frame dynamic pass only the movers.
+            const bool mover_part = (i == LLViewerRegion::PARTITION_BRIDGE || i == LLViewerRegion::PARTITION_AVATAR || i == LLViewerRegion::PARTITION_CONTROL_AV);
+            const bool walk = (filter == SHADOW_CULL_ALL) || (filter == SHADOW_CULL_DYNAMIC ? mover_part : isStaticShadowPartition(i));
+            if (part && walk)
             {
                 if (!hud_attachments ? LLViewerRegion::PARTITION_BRIDGE == i || hasRenderType(part->mDrawableType) : hasRenderType(part->mDrawableType))
                 {
@@ -13275,7 +13313,7 @@ inline float sgn(float a)
     return (0.0F);
 }
 
-void LLPipeline::renderShadow(const LLMatrix4a& view, const LLMatrix4a& proj, LLCamera& shadow_cam, LLCullResult& result, bool depth_clamp, bool do_cull)
+void LLPipeline::renderShadow(const LLMatrix4a& view, const LLMatrix4a& proj, LLCamera& shadow_cam, LLCullResult& result, bool depth_clamp, bool do_cull, EShadowCullFilter filter)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE; //LL_RECORD_BLOCK_TIME(FTM_SHADOW_RENDER);
     LL_PROFILE_GPU_ZONE("renderShadow");
@@ -13316,7 +13354,7 @@ void LLPipeline::renderShadow(const LLMatrix4a& view, const LLMatrix4a& proj, LL
     // so skip the per-cascade octree walk and only sort/build this cascade's render map.
     if (do_cull)
     {
-        updateCull(shadow_cam, result);
+        updateCull(shadow_cam, result, false, filter); // <SS:ShadowCache>
     }
 
     stateSort(shadow_cam, result);
@@ -13382,6 +13420,8 @@ void LLPipeline::renderShadow(const LLMatrix4a& view, const LLMatrix4a& proj, LL
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("shadow geom");
+        // The pools draw only the faces this pass's cull put in them, so the static and
+        // mover splits need no mask of their own here.
         renderGeomShadow(shadow_cam);
     }
 
@@ -13524,16 +13564,10 @@ void LLPipeline::renderShadow(const LLMatrix4a& view, const LLMatrix4a& proj, LL
     LLPipeline::sShadowRender = false;
 }
 
-bool LLPipeline::getVisiblePointCloud(LLCamera& camera, LLVector3& min, LLVector3& max, std::vector<LLVector3>& fp, LLVector3 light_dir)
+// The points of the frustum slice that lie inside the box, plus the box corners inside the
+// slice: what a shadow projection has to cover.
+static void cloudFromBox(LLCamera& camera, const LLVector3& min, const LLVector3& max, std::vector<LLVector3>& fp)
 {
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
-    //get point cloud of intersection of frust and min, max
-
-    if (getVisibleExtents(camera, min, max))
-    {
-        return false;
-    }
-
     //get set of planes on bounding box
     LLPlane bp[] = {
         LLPlane(min, LLVector3(-1,0,0)),
@@ -13688,6 +13722,32 @@ bool LLPipeline::getVisiblePointCloud(LLCamera& camera, LLVector3& min, LLVector
         }
     }
 
+}
+
+bool LLPipeline::getVisiblePointCloud(LLCamera& camera, LLVector3& min, LLVector3& max, std::vector<LLVector3>& fp, LLVector3 light_dir, std::vector<LLVector3>* fp_static)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
+    //get point cloud of intersection of frust and min, max
+
+    LLVector3 smin, smax;
+    if (getVisibleExtents(camera, min, max, fp_static ? &smin : nullptr, fp_static ? &smax : nullptr))
+    {
+        return false;
+    }
+
+    cloudFromBox(camera, min, max, fp);
+
+    // <SS:ShadowCache> the same slice against the static-only box, for a cache box that a
+    // passing avatar or vehicle cannot drag around
+    if (fp_static)
+    {
+        fp_static->clear();
+        if (smin.mV[0] <= smax.mV[0])
+        {
+            cloudFromBox(camera, smin, smax, *fp_static);
+        }
+    }
+
     if (fp.empty())
     {
         return false;
@@ -13793,6 +13853,268 @@ static void bucketShadowCull(LLCullResult& src, LLCamera& cam, LLCullResult& dst
         dst.pushBridge(*i);
     }
 }
+
+// <SS:ShadowCache>
+// static
+bool LLPipeline::isStaticShadowPartition(U32 partition_type)
+{
+    return partition_type == LLViewerRegion::PARTITION_TERRAIN || partition_type == LLViewerRegion::PARTITION_TREE ||
+           partition_type == LLViewerRegion::PARTITION_GRASS   || partition_type == LLViewerRegion::PARTITION_VOLUME;
+}
+
+void LLPipeline::shadowCacheNoteStaticChange(const LLVector4a& center, const LLVector4a& half, U32 partition_type)
+{
+    for (ShadowCascadeCache& cache : mShadowCache)
+    {
+        if (cache.mValid && cache.mCamera.AABBInFrustum(center, half) > 0)
+        {
+            cache.mDirty = true;
+            ++cache.mNotes;
+            cache.mLastNoteType = partition_type;
+            cache.mLastNoteCenter.set(center.getF32ptr());
+        }
+    }
+}
+
+void LLPipeline::releaseShadowCache()
+{
+    for (ShadowCascadeCache& cache : mShadowCache)
+    {
+        cache.mDepth.release();
+        cache.mValid = false;
+        cache.mAllocFailed = false;
+    }
+}
+
+// The one cascade this frame that may refresh for a reason that can wait (the sun crept,
+// it aged out, a static change landed in it): the one that has gone longest without.
+S32 LLPipeline::pickShadowCacheSoftSlot(const LLVector3& lightDir) const
+{
+    static LLCachedControl<F32> shadow_cache_age(gSavedSettings, "RenderShadowCacheMaxAge", 2.f);
+    static LLCachedControl<F32> shadow_cache_sun(gSavedSettings, "RenderShadowCacheSunAngle", 0.05f);
+    static LLCachedControl<S32> shadow_cache_interval(gSavedSettings, "RenderShadowCacheMinInterval", 6);
+    const F32 sun_cos = cosf(llclamp((F32)shadow_cache_sun, 0.05f, 10.f) * DEG_TO_RAD);
+    const F32 max_age = llmax((F32)shadow_cache_age, 0.1f);
+    const U32 interval = (U32)llmax((S32)shadow_cache_interval, 1);
+
+    S32 slot = -1;
+    U32 oldest = 0xFFFFFFFFu;
+    for (S32 c = 0; c < 4; ++c)
+    {
+        const ShadowCascadeCache& cache = mShadowCache[c];
+        if (!cache.mValid)
+        {
+            continue;
+        }
+        const bool sun_moved = cache.mLightDir * lightDir < sun_cos;
+        const bool aged = (gFrameTimeSeconds - cache.mTime) > max_age;
+        const bool dirty = cache.mDirty && (gFrameCount - cache.mFrame) >= interval;
+        if ((sun_moved || aged || dirty) && cache.mFrame < oldest)
+        {
+            oldest = cache.mFrame;
+            slot = c;
+        }
+    }
+    return slot;
+}
+
+// One sun cascade from the cache: refresh the static depth when the box no longer serves,
+// then blit it into the cascade and draw the movers over it. Returns false when this cascade
+// cannot be cached this frame (no target, or the frame's hard-refresh budget is spent) and
+// the caller draws it the old way.
+bool LLPipeline::renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp, const std::vector<LLVector3>& fp_static,
+                                        const LLVector3& lightDir, const LLPlane& shadow_near_clip, const LLCamera& camera,
+                                        const LLMatrix4a& inv_view, bool soft_slot, S32& hard_budget)
+{
+    static LLCachedControl<F32> shadow_cache_pad(gSavedSettings, "RenderShadowCachePad", 0.25f);
+
+    ShadowCascadeCache& cache = mShadowCache[j];
+    const U32 cw = mRT->shadow[j].getWidth();
+    const U32 ch = mRT->shadow[j].getHeight();
+    if (cache.mAllocFailed || cw == 0 || ch == 0 || fp.empty())
+    {
+        return false;
+    }
+
+    // A light-space basis that does not turn with the camera, so the box outlives a look
+    // around. The old per-frame fit keyed its basis off the camera's at axis.
+    const LLVector3 cup = (fabsf(lightDir.mV[VZ]) > 0.75f) ? LLVector3(1.f, 0.f, 0.f) : LLVector3(0.f, 0.f, 1.f);
+    const LLMatrix4a cview = LLMatrix4a::lookDir(LLVector4a(0.f, 0.f, 0.f, 1.f),
+                                                 LLVector4a(lightDir.mV[0], lightDir.mV[1], lightDir.mV[2]),
+                                                 LLVector4a(cup.mV[0], cup.mV[1], cup.mV[2]));
+    // The slice's box in a given light basis. Its width and height come from the static
+    // extents when there are any, so a mover at the edge of the view cannot drag the box and
+    // force a refresh every second; its depth range comes from everything, so movers keep
+    // receiving each other's shadows on open ground where nothing static stands as tall.
+    auto cloud_box = [](const std::vector<LLVector3>& pts, const LLMatrix4a& view, LLVector3& bmin, LLVector3& bmax)
+    {
+        for (U32 i = 0; i < pts.size(); ++i)
+        {
+            LLVector4a p;
+            view.affineTransform(LLVector4a(pts[i].mV[0], pts[i].mV[1], pts[i].mV[2], 1.f), p);
+            const LLVector3 v(p.getF32ptr());
+            if (i == 0)
+            {
+                bmin = bmax = v;
+            }
+            else
+            {
+                update_min_max(bmin, bmax, v);
+            }
+        }
+    };
+    auto slice_box = [&](const LLMatrix4a& view, LLVector3& bmin, LLVector3& bmax)
+    {
+        cloud_box(fp, view, bmin, bmax);
+        if (!fp_static.empty())
+        {
+            LLVector3 smin, smax;
+            cloud_box(fp_static, view, smin, smax);
+            bmin.mV[0] = smin.mV[0]; bmax.mV[0] = smax.mV[0];
+            bmin.mV[1] = smin.mV[1]; bmax.mV[1] = smax.mV[1];
+        }
+    };
+    LLVector3 bmin, bmax;
+    slice_box(cview, bmin, bmax);
+
+    if (bmax.mV[0] - bmin.mV[0] < 0.01f || bmax.mV[1] - bmin.mV[1] < 0.01f || bmax.mV[2] - bmin.mV[2] < 0.01f)
+    {   // a degenerate slice would snap to a zero texel
+        return false;
+    }
+
+    // Everything the static cull baked in besides the box: the region the agent coordinates
+    // hang off, which side of the water plane it kept, and the render-type mask.
+    const LLVector3d region_origin = gAgent.getRegion() ? gAgent.getRegion()->getOriginGlobal() : LLVector3d::zero;
+    const bool under_water = sUnderWaterRender;
+    U64 mask_hash = 1469598103934665603ULL;
+    for (U32 t = 0; t < NUM_RENDER_TYPES; ++t)
+    {
+        mask_hash = (mask_hash ^ (mRenderTypeEnabled[t] ? 1u : 0u)) * 1099511628211ULL;
+    }
+
+    // Hard reasons: the box no longer answers for this cascade at all.
+    bool hard = !cache.mValid
+        || !cache.mDepth.isComplete()
+        || cache.mDepth.getWidth() != cw || cache.mDepth.getHeight() != ch
+        || cache.mRegionOrigin != region_origin
+        || cache.mUnderWater != under_water
+        || cache.mMaskHash != mask_hash;
+    if (!hard)
+    {   // containment, in the basis the box was built in
+        LLVector3 tmin, tmax;
+        slice_box(cache.mView, tmin, tmax);
+        hard = !(tmin.mV[0] >= cache.mMin.mV[0] && tmin.mV[1] >= cache.mMin.mV[1] && tmin.mV[2] >= cache.mMin.mV[2]
+              && tmax.mV[0] <= cache.mMax.mV[0] && tmax.mV[1] <= cache.mMax.mV[1] && tmax.mV[2] <= cache.mMax.mV[2]);
+    }
+    if (hard)
+    {
+        if (hard_budget <= 0)
+        {   // this frame's hard refreshes are spent: the uncached path draws this one
+            ++cache.mUncached;
+            return false;
+        }
+        --hard_budget;
+    }
+
+    if (hard || soft_slot)
+    {
+        if (!cache.mDepth.isComplete() || cache.mDepth.getWidth() != cw || cache.mDepth.getHeight() != ch)
+        {
+            cache.mDepth.release();
+            if (!cache.mDepth.allocate(cw, ch, 0, true, false, ALTextureSlot::TT_TEXTURE, LLRenderTarget::MIPS_NONE, mRT->shadow[j].getDepthFormat()))
+            {
+                LL_WARNS("ShadowCache") << "Cascade " << j << " cache target failed to allocate; uncached until the maps reallocate" << LL_ENDL;
+                cache.mValid = false;
+                cache.mAllocFailed = true;
+                return false;
+            }
+        }
+
+        // Pad each axis by its own size, so the box grows by exactly the factor the map grew
+        // by and a texel keeps its size on both axes. The z pad follows the slice's own depth:
+        // the shader's constant bias is a fraction of the depth range, so padding z by the
+        // width would multiply it. Casters nearer the light than the box are depth-clamped.
+        const F32 padf = llclamp((F32)shadow_cache_pad, 0.02f, 1.f);
+        const LLVector3 size = bmax - bmin;
+        LLVector3 cmin = bmin - size * padf;
+        LLVector3 cmax = bmax + size * padf;
+        // Snap the box to its own texel grid so a refresh lands on the same sampling lattice.
+        // ponytail: the texel size still varies with the slice, so a refresh can shift edges
+        // by a fraction of a texel; quantise the box size if that ever shows.
+        const F32 tx = (cmax.mV[0] - cmin.mV[0]) / (F32)cw;
+        const F32 ty = (cmax.mV[1] - cmin.mV[1]) / (F32)ch;
+        cmin.mV[0] = floorf(cmin.mV[0] / tx) * tx;
+        cmax.mV[0] = cmin.mV[0] + tx * (F32)cw;
+        cmin.mV[1] = floorf(cmin.mV[1] / ty) * ty;
+        cmax.mV[1] = cmin.mV[1] + ty * (F32)ch;
+
+        cache.mView = cview;
+        cache.mProj = al_ortho(cmin.mV[0], cmax.mV[0], cmin.mV[1], cmax.mV[1], -cmax.mV[2], -cmin.mV[2]);
+        cache.mMin = cmin;
+        cache.mMax = cmax;
+        cache.mLightDir = lightDir;
+        cache.mRegionOrigin = region_origin;
+        cache.mUnderWater = under_water;
+        cache.mMaskHash = mask_hash;
+        cache.mCamera = camera;
+        cache.mCamera.lookAt(camera.getOrigin(), camera.getOrigin() + lightDir, cup);
+        cache.mCamera.setOrigin(0.f, 0.f, 0.f);
+        cache.mCamera.setModelview(cache.mView);
+        cache.mCamera.setProjection(cache.mProj);
+        LLViewerCamera::updateFrustumPlanes(cache.mCamera, false, false, true);
+        cache.mCamera.setAgentPlane(LLCamera::AGENT_PLANE_NEAR, shadow_near_clip);
+        cache.mFrame = gFrameCount;
+        cache.mTime = gFrameTimeSeconds;
+        cache.mValid = true;
+        if (hard)
+        {
+            ++cache.mHardRefreshes;
+        }
+        else
+        {
+            ++cache.mSoftRefreshes;
+        }
+
+        LLCamera ccam = cache.mCamera;
+        LLViewerCamera::setCurrent(ccam);
+        cache.mDepth.bindTarget();
+        cache.mDepth.getViewport(gGLViewport);
+        cache.mDepth.clear();
+        static LLCullResult static_result[4];
+        renderShadow(cache.mView, cache.mProj, ccam, static_result[j], true, true, SHADOW_CULL_STATIC);
+        cache.mDepth.flush();
+        // Groups the refresh rebuilt on its way through flagged this cascade too; they are in
+        // the depth it just drew. The other cascades keep their flags.
+        cache.mDirty = false;
+        cache.mNotes = 0;
+    }
+
+    LLCamera ccam = cache.mCamera;
+    ccam.setAgentPlane(LLCamera::AGENT_PLANE_NEAR, shadow_near_clip);
+    LLViewerCamera::setCurrent(ccam);
+
+    mShadowError.mV[j] = -1.f;
+    mShadowFOV.mV[j] = -1.f;
+    mShadowModelview[j] = cache.mView;
+    mShadowProjection[j] = cache.mProj;
+    const LLMatrix4a trans = LLRender::sReverseZ ? clip_to_texture(1.f, 0.f) : clip_to_texture(0.5f, 0.5f);
+    mSunShadowMatrix[j].setMul(inv_view, cache.mView);
+    mSunShadowMatrix[j].setMul(mSunShadowMatrix[j], cache.mProj);
+    mSunShadowMatrix[j].setMul(mSunShadowMatrix[j], trans);
+    if (!hasRenderDebugMask(RENDER_DEBUG_SHADOW_FRUSTA))
+    {
+        mShadowCamera[j + 4] = ccam;
+    }
+
+    mRT->shadow[j].bindTarget();
+    mRT->shadow[j].getViewport(gGLViewport);
+    mRT->shadow[j].copyContents(cache.mDepth, 0, 0, cw, ch, 0, 0, cw, ch, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+    static LLCullResult dynamic_result[4];
+    renderShadow(cache.mView, cache.mProj, ccam, dynamic_result[j], true, true, SHADOW_CULL_DYNAMIC);
+    mRT->shadow[j].flush();
+    return true;
+}
+// </SS:ShadowCache>
 
 void LLPipeline::generateSunShadow(LLCamera& camera)
 {
@@ -14041,9 +14363,13 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         // its own slice -- GPU-neutral vs. per-cascade culling, so it helps CPU-bound
         // targets without regressing GPU-bound ones. Disabled in cube snapshots. Default 0.
         static LLCachedControl<S32> sShadowCullMode(gSavedSettings, "RenderShadowCullMode", 0);
+        // <SS:ShadowCache> the cached cascades cull for themselves, so the union walk would
+        // only be a fifth one.
+        static LLCachedControl<bool> shadow_cache(gSavedSettings, "RenderShadowCache", true);
+        const bool use_cache = shadow_cache && !gCubeSnapshot && !sImpostorRender && mRT == &mMainRT;
         bool have_union_cull = false;
         static LLCullResult sUnionShadowResult;
-        if (sShadowCullMode() == 1 && !gCubeSnapshot)
+        if (sShadowCullMode() == 1 && !gCubeSnapshot && !use_cache)
         {
             LLCamera ucam = camera;
             ucam.setFar(16.f);
@@ -14129,6 +14455,13 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             }
         }
 
+        // <SS:ShadowCache> one cascade may take a refresh that can wait; hard refreshes (the
+        // slice left its box, or the cull's inputs changed) get a budget, and past it a
+        // cascade draws uncached for the frame instead of stacking four static passes.
+        const S32 soft_slot = use_cache ? pickShadowCacheSoftSlot(lightDir) : -1;
+        S32 hard_budget = 2;
+        // </SS:ShadowCache>
+
         for (S32 j = 0; j < (gCubeSnapshot ? 2 : 4); j++)
         {
             if (!hasRenderDebugMask(RENDER_DEBUG_SHADOW_FRUSTA) && !gCubeSnapshot)
@@ -14180,8 +14513,10 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
             static std::vector<LLVector3> fp;
             fp.clear();
+            static std::vector<LLVector3> fp_static; // <SS:ShadowCache>
+            fp_static.clear();
 
-            if (!gPipeline.getVisiblePointCloud(shadow_cam, min, max, fp, lightDir)
+            if (!gPipeline.getVisiblePointCloud(shadow_cam, min, max, fp, lightDir, use_cache ? &fp_static : nullptr)
                 || j > RenderShadowSplits)
             {
                 //no possible shadow receivers
@@ -14211,6 +14546,13 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 mShadowExtents[j][1] = max;
                 mShadowFrustPoints[j] = fp;
             }
+
+            // <SS:ShadowCache>
+            if (use_cache && renderCachedSunCascade(j, fp, fp_static, lightDir, shadow_near_clip, camera, inv_view, soft_slot == j, hard_budget))
+            {
+                continue;
+            }
+            // </SS:ShadowCache>
 
 
             //find a good origin for shadow projection
@@ -14664,13 +15006,15 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
     }
     else
     {
+        // mShadowModelview/mShadowProjection: both the fitted and the cached path set those,
+        // the local view[]/proj[] only the fitted one.
         LLCamera offset_cam = camera;
-        offset_cam.setModelview(view[1]);
-        offset_cam.setProjection(proj[1]);
+        offset_cam.setModelview(mShadowModelview[1]);
+        offset_cam.setProjection(mShadowProjection[1]);
         LLViewerCamera::setCurrent(offset_cam);
-        gGL.loadMatrix(view[1]);
+        gGL.loadMatrix(mShadowModelview[1]);
         gGL.matrixMode(LLRender::MM_PROJECTION);
-        gGL.loadMatrix(proj[1]);
+        gGL.loadMatrix(mShadowProjection[1]);
         gGL.matrixMode(LLRender::MM_MODELVIEW);
     }
     gGL.setColorMask(true, true);
