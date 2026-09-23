@@ -537,19 +537,37 @@ void LLSpatialGroup::setState(U32 state, S32 mode)
 
 }
 
-// <SS:ShadowCache> A static group about to change, or just rebuilt: its bounds are what a
-// cached sun cascade has drawn and must redraw. Only the partitions the cache holds count;
-// movers draw every frame and particles never cast. A group still being constructed has no
-// bounds (and, for a partition's root, no partition type yet) and says nothing.
+// <SS:ShadowCache> A static group just rebuilt. If its footprint is what it was when it went
+// dirty, this was a LOD or texture rebuild and the cached depth still holds; the age refresh
+// covers the rare edit that keeps its bounds. Otherwise something appeared, left or moved, and
+// both the old and the new footprint have to be redrawn. Only the partitions the cache holds
+// count; movers draw every frame and particles never cast.
 void LLSpatialGroup::noteStaticShadowChange()
 {
     LLSpatialPartition* part = getSpatialPartition();
-    if (!part || part->isBridge() || !LLPipeline::isStaticShadowPartition(part->mPartitionType) ||
-        mObjectBounds[1].equals3(LLVector4a::getZero()))
+    if (!part || part->isBridge() || !LLPipeline::isStaticShadowPartition(part->mPartitionType))
     {
         return;
     }
-    gPipeline.shadowCacheNoteStaticChange(mObjectBounds[0], mObjectBounds[1], part->mPartitionType);
+    const LLVector4a& c = mObjectBounds[0];
+    const LLVector4a& h = mObjectBounds[1];
+    const LLVector4a& oc = mShadowDirtyBounds[0];
+    const LLVector4a& oh = mShadowDirtyBounds[1];
+    LLVector4a dc, dh;
+    dc.setSub(c, oc);
+    dh.setSub(h, oh);
+    if (dc.getLength3().getF32() < 0.05f && dh.getLength3().getF32() < 0.05f)
+    {
+        return; // same footprint
+    }
+    if (!oh.equals3(LLVector4a::getZero()))
+    {
+        gPipeline.shadowCacheNoteStaticChange(oc, oh, part->mPartitionType);
+    }
+    if (!h.equals3(LLVector4a::getZero()))
+    {
+        gPipeline.shadowCacheNoteStaticChange(c, h, part->mPartitionType);
+    }
 }
 
 class LLSpatialClearState : public OctreeTraveler
