@@ -549,7 +549,7 @@ void LLSpatialGroup::noteStaticShadowChange()
     {
         return;
     }
-    gPipeline.shadowCacheNoteStaticChange(mObjectBounds[0], mObjectBounds[1]);
+    gPipeline.shadowCacheNoteStaticChange(mObjectBounds[0], mObjectBounds[1], part->mPartitionType);
 }
 
 class LLSpatialClearState : public OctreeTraveler

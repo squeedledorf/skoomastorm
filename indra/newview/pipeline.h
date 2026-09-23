@@ -471,7 +471,7 @@ public:
     // A static spatial group changed (rebuilt, emptied, took or lost an object, or a face's
     // texture animated): every cached cascade whose box holds these bounds is marked to
     // re-render. Called from llspatialpartition and llvovolume.
-    void shadowCacheNoteStaticChange(const LLVector4a& center, const LLVector4a& half);
+    void shadowCacheNoteStaticChange(const LLVector4a& center, const LLVector4a& half, U32 partition_type = 0);
     void releaseShadowCache();
     S32  pickShadowCacheSoftSlot(const LLVector3& lightDir) const;
     bool renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp, const std::vector<LLVector3>& fp_static, const LLVector3& lightDir, const LLPlane& shadow_near_clip, const LLCamera& camera, const LLMatrix4a& inv_view, bool soft_slot, S32& hard_budget);
@@ -1070,6 +1070,9 @@ public:
         U32             mHardRefreshes = 0;  // for the Show Shadow Cache Info HUD
         U32             mSoftRefreshes = 0;
         U32             mUncached = 0;       // frames this cascade drew the old way (budget spent, no target)
+        U32             mNotes = 0;          // static changes that landed in this box since the last refresh
+        U32             mLastNoteType = 0;   // partition type and centre of the last one, to name a churn
+        LLVector3       mLastNoteCenter;
     };
     ShadowCascadeCache      mShadowCache[4];
     LLVector3               mShadowExtents[4][2];

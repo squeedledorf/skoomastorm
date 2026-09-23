@@ -655,11 +655,14 @@ public:
                 const LLPipeline::ShadowCascadeCache& k = gPipeline.mShadowCache[c];
                 const LLVector3 box = k.mMax - k.mMin;
                 const F32 texel = (k.mValid && k.mDepth.getWidth() > 0) ? box.mV[0] / (F32)k.mDepth.getWidth() : 0.f;
-                addText(xpos, ypos, llformat("  %d: %-5s%-6s age %5.2f s  hard %u soft %u uncached %u  box %.0fx%.0fx%.0f m  texel %.3f m",
+                static const char* part_names[] = { "hud", "terrain", "voidwater", "water", "tree", "particle", "grass", "volume", "bridge", "avatar", "animesh", "hudparticle", "vocache", "none" };
+                const U32 pt = llmin(k.mLastNoteType, (U32)(LL_ARRAY_SIZE(part_names) - 1));
+                addText(xpos, ypos, llformat("  %d: %-5s%-6s age %5.2f s  hard %u soft %u uncached %u  box %.0fx%.0fx%.0f m  texel %.3f m  dirt %u by %s at %.0f,%.0f,%.0f",
                                              c, k.mValid ? "valid" : "empty", k.mDirty ? " dirty" : "",
                                              k.mValid ? (F32)(gFrameTimeSeconds - k.mTime) : 0.f,
                                              k.mHardRefreshes, k.mSoftRefreshes, k.mUncached,
-                                             box.mV[0], box.mV[1], box.mV[2], texel));
+                                             box.mV[0], box.mV[1], box.mV[2], texel,
+                                             k.mNotes, part_names[pt], k.mLastNoteCenter.mV[0], k.mLastNoteCenter.mV[1], k.mLastNoteCenter.mV[2]));
                 ypos += y_inc;
             }
         }

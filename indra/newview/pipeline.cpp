@@ -13862,13 +13862,16 @@ bool LLPipeline::isStaticShadowPartition(U32 partition_type)
            partition_type == LLViewerRegion::PARTITION_GRASS   || partition_type == LLViewerRegion::PARTITION_VOLUME;
 }
 
-void LLPipeline::shadowCacheNoteStaticChange(const LLVector4a& center, const LLVector4a& half)
+void LLPipeline::shadowCacheNoteStaticChange(const LLVector4a& center, const LLVector4a& half, U32 partition_type)
 {
     for (ShadowCascadeCache& cache : mShadowCache)
     {
-        if (cache.mValid && !cache.mDirty && cache.mCamera.AABBInFrustum(center, half) > 0)
+        if (cache.mValid && cache.mCamera.AABBInFrustum(center, half) > 0)
         {
             cache.mDirty = true;
+            ++cache.mNotes;
+            cache.mLastNoteType = partition_type;
+            cache.mLastNoteCenter.set(center.getF32ptr());
         }
     }
 }
@@ -14083,6 +14086,7 @@ bool LLPipeline::renderCachedSunCascade(S32 j, const std::vector<LLVector3>& fp,
         // Groups the refresh rebuilt on its way through flagged this cascade too; they are in
         // the depth it just drew. The other cascades keep their flags.
         cache.mDirty = false;
+        cache.mNotes = 0;
     }
 
     LLCamera ccam = cache.mCamera;
