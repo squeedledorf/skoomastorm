@@ -655,11 +655,11 @@ public:
                 const LLPipeline::ShadowCascadeCache& k = gPipeline.mShadowCache[c];
                 const LLVector3 box = k.mMax - k.mMin;
                 const F32 texel = (k.mValid && k.mDepth.getWidth() > 0) ? box.mV[0] / (F32)k.mDepth.getWidth() : 0.f;
-                addText(xpos, ypos, llformat("  %d: %-5s%-6s age %5.2f s  box %4.0f x %4.0f x %4.0f m  texel %.3f m  refreshes hard %u soft %u  uncached frames %u",
+                addText(xpos, ypos, llformat("  %d: %-5s%-6s age %5.2f s  hard %u soft %u uncached %u  box %.0fx%.0fx%.0f m  texel %.3f m",
                                              c, k.mValid ? "valid" : "empty", k.mDirty ? " dirty" : "",
                                              k.mValid ? (F32)(gFrameTimeSeconds - k.mTime) : 0.f,
-                                             box.mV[0], box.mV[1], box.mV[2], texel,
-                                             k.mHardRefreshes, k.mSoftRefreshes, k.mUncached));
+                                             k.mHardRefreshes, k.mSoftRefreshes, k.mUncached,
+                                             box.mV[0], box.mV[1], box.mV[2], texel));
                 ypos += y_inc;
             }
         }

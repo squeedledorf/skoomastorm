@@ -839,15 +839,14 @@ void LLVOVolume::animateTextures()
                     }
                 }
 
-                // <SS:ShadowCache> a scrolling or spinning cutout on a static caster changes
-                // its shadow every frame with no group state change; tell the cache.
+                // <SS:ShadowCache> a scrolling or spinning cutout changes its shadow every
+                // frame. As a static it would dirty every cached cascade that holds it, every
+                // frame; as a mover it draws with the avatars each frame and the cache stays
+                // put, which is how flexible prims already live.
                 if (mDrawable->isStatic() && facep->getTexture() &&
                     (facep->getTexture()->getComponents() == 4 || te->getAlpha() < 1.f))
                 {
-                    if (LLSpatialGroup* sgroup = mDrawable->getSpatialGroup())
-                    {
-                        sgroup->noteStaticShadowChange();
-                    }
+                    mDrawable->makeActive();
                 }
                 LLMatrix4& tex_mat = *facep->mTextureMatrix;
                 tex_mat.setIdentity();
