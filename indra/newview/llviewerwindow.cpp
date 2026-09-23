@@ -657,12 +657,15 @@ public:
                 const F32 texel = (k.mValid && k.mDepth.getWidth() > 0) ? box.mV[0] / (F32)k.mDepth.getWidth() : 0.f;
                 static const char* part_names[] = { "hud", "terrain", "voidwater", "water", "tree", "particle", "grass", "volume", "bridge", "avatar", "animesh", "hudparticle", "vocache", "none" };
                 const U32 pt = llmin(k.mLastNoteType, (U32)(LL_ARRAY_SIZE(part_names) - 1));
-                addText(xpos, ypos, llformat("  %d: %-5s%-6s age %5.2f s  hard %u soft %u uncached %u  box %.0fx%.0fx%.0f m  texel %.3f m  dirt %u by %s at %.0f,%.0f,%.0f",
+                // Two lines per cascade: the HUD sits against the right edge and a long line runs off it.
+                addText(xpos, ypos, llformat("  %d: %-5s%-6s age %5.2f s  hard %u soft %u uncached %u",
                                              c, k.mValid ? "valid" : "empty", k.mDirty ? " dirty" : "",
                                              k.mValid ? (F32)(gFrameTimeSeconds - k.mTime) : 0.f,
-                                             k.mHardRefreshes, k.mSoftRefreshes, k.mUncached,
-                                             box.mV[0], box.mV[1], box.mV[2], texel,
-                                             k.mNotes, part_names[pt], k.mLastNoteCenter.mV[0], k.mLastNoteCenter.mV[1], k.mLastNoteCenter.mV[2]));
+                                             k.mHardRefreshes, k.mSoftRefreshes, k.mUncached));
+                ypos += y_inc;
+                addText(xpos, ypos, llformat("     dirt %u, last %s at %.0f,%.0f,%.0f  box %.0fx%.0fx%.0f m  texel %.3f m",
+                                             k.mNotes, part_names[pt], k.mLastNoteCenter.mV[0], k.mLastNoteCenter.mV[1], k.mLastNoteCenter.mV[2],
+                                             box.mV[0], box.mV[1], box.mV[2], texel));
                 ypos += y_inc;
             }
         }
